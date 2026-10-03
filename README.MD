@@ -1,4 +1,4 @@
-# QBL - QuickBASIC Quick Library (.QLB) format
+# QLB - QuickBASIC Quick Library (.QLB) format
 
 This folder is the result of reverse engineering of the **Quick
 Library** format of Microsoft QuickBASIC 4.0 / 4.5: the file
@@ -9,7 +9,7 @@ own `QB.QLB`, and released into the **public domain**
 (Unlicense, `(c) DosWorld 2026`). Use it for anything, without
 conditions.
 
-## What is a .QLB (.QBL)?
+## What is a .QLB?
 
 A Quick Library is the file that QuickBASIC loads with `QB /L
 name.QLB`. It contains compiled routines (assembler, C, anything
@@ -67,20 +67,20 @@ PRINT SUMI%(1000, 234)     ' assembler routine from MYLIB.QLB
 
 ## The documents
 
-* [`QBLFMT.MD`](QBLFMT.MD)
+* [`QLBFMT.MD`](QLBFMT.MD)
   - what it is: **The format specification.** File layout, MZ
     header, QB header, the three tables, memory model,
     relocation, the dispatcher and its selectors, the calling
     convention, imports, limits, QuickBASIC's refusal checklist,
     an annotated byte dump, assembler examples.
-* [`QBLUSE.MD`](QBLUSE.MD)
+* [`QLBUSE.MD`](QLBUSE.MD)
   - what it is: **Consumer manual.** Part A: using a library
     from a QuickBASIC program (parameters, return values,
     errors, pitfalls). Part B: loading a library from your own
     DOS program: load, relocate, resolve exports and imports,
     phases with codes, call routines, unload - with the
     assembler code.
-* [`QBLWRT.MD`](QBLWRT.MD)
+* [`QLBWRT.MD`](QLBWRT.MD)
   - what it is: **Writer guide.** Writing routines in NASM
     (stack frames for every parameter type, return values), the
     life cycle hook, imports, data, linking with `rlink qlb`,
@@ -143,7 +143,7 @@ rlink mzs /o=ALOADER.EXE ALOADER.RDF
 
 * With `DEMO.QLB`, some BASIC programs with 10 or more call
   sites froze QuickBASIC 4.50 before they started; the reason is
-  not known (`QBLUSE.MD` A5). `DEMO.BAS` is split in two
+  not known (`QLBUSE.MD` A5). `DEMO.BAS` is split in two
   programs.
 * Only **one** library can be loaded by QuickBASIC (`/L` twice
   prints the usage line); all modules have to be linked into
