@@ -1,0 +1,15 @@
+ALOADER: loads a .QLB, plays the part of QuickBASIC
+library file: QB.QLB
+  block segment   = 0B8D
+  block paragraphs= 045E
+  w2 code paras   = 00A6
+  w3 data end     = 03DE
+  w4 symbol bytes = 07F1
+  data segment    = 0C33
+  D (tail offset) = 3317
+  T (tail bytes)  = 0069
+  relocations     = 143
+checks passed: QB header, segments, b_ULVars.
+CODE table lookup of INT86OLD: 0B9E:0004
+block released with AH=49h.
+done.

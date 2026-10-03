@@ -1,0 +1,11 @@
+QLOADER 1/2: parameters and results of DEMO.QLB
+ADDONE(41), by reference: x% = 42
+SUMI%(1000, 234) -> AX = 1234
+SUML&(70000, 5) -> DX:AX = 70005
+ADDBV%(7, 8), BYVAL -> AX = 15
+SLEN%(t$), descriptor -> AX = 5
+UPCASE(t$) edits in place: HELLO
+FILLB, far pointer BYVAL: 16705 16705 16705 0
+COPYS!(2.5), hidden pointer: 2.5
+COPYD#(1234.5678), hidden ptr: 1234.5678
+done
