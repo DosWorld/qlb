@@ -62,18 +62,21 @@ CALL ADDONE(x%)
 total% = SUMI%(a%, b%)
 ```
 
-QB asks the library for the address of each routine **once for
-every `CALL` / function reference in the source, before the
-program runs** (selector `0Ah`, `QLBFMT.MD` section 9). If the
-library does not know the name, QB reports an error and does not
-run.
+A C-style routine has an underscore in front of its symbol
+(`_foo`). Declare it with `CDECL` (`DECLARE FUNCTION cdiff%
+CDECL (...)` finds `_CDIFF`; the routine gets its arguments in
+the C order and the caller removes them, `QLBWRT.MD` section
+2.1), or with `ALIAS "_foo"`, which keeps the BASIC convention.
+QB asks the library for every routine before the program runs;
+if nothing defines a name, it reports an error and does not run
+(`QLBFMT.MD` section 12).
 
 ## A3. Parameters and return values
 
 What the assembler routine receives is fixed by BASIC's
 convention (`QLBFMT.MD` section 10). The table below is what
 `DEMO.QLB` does with each kind; the output is from the run of
-`DEMO.BAS` under QuickBASIC 4.50 (`QLOADER\OUTPUT1.TXT`).
+`DEMO.BAS` under QuickBASIC 4.50 (`QLOADER\OUTPUT.TXT`).
 
 * `SUB x (n AS INTEGER)`
   - what the routine sees on the stack: near pointer to `n`; the
@@ -117,8 +120,8 @@ convention (`QLBFMT.MD` section 10). The table below is what
   - result: pointer in `AX`, value in the buffer
   - demo routine: `COPYD`
 
-The program that produced the output (`DEMO.BAS`; `Say` prints
-on the screen and into `RESULT.TXT`):
+The program (`DEMO.BAS`; `Say` prints on the screen and into
+`RESULT.TXT`):
 
 ```basic
 DECLARE SUB Say (s AS STRING)
@@ -131,9 +134,14 @@ DECLARE SUB UPCASE (s AS STRING)
 DECLARE SUB FILLB (BYVAL sg%, BYVAL ofs%, BYVAL n%, BYVAL v%)
 DECLARE FUNCTION COPYS! (a AS SINGLE)
 DECLARE FUNCTION COPYD# (a AS DOUBLE)
+DECLARE FUNCTION cdiff% CDECL (BYVAL a%, BYVAL b%)
+DECLARE SUB RAISEERR (BYVAL code%)
+DECLARE FUNCTION SYMSEG% ()
+DECLARE FUNCTION GETCNT% ()
+DECLARE FUNCTION GETSEL% (BYVAL i%)
 
 OPEN "RESULT.TXT" FOR OUTPUT AS #1
-Say "QLOADER 1/2: parameters and results of DEMO.QLB"
+Say "QLOADER: calling DEMO.QLB (NASM) from QuickBASIC"
 
 x% = 41
 CALL ADDONE(x%)
@@ -162,53 +170,7 @@ Say "COPYS!(2.5), hidden pointer:" + STR$(COPYS!(f!))
 d# = 1234.5678#
 Say "COPYD#(1234.5678), hidden ptr:" + STR$(COPYD#(d#))
 
-Say "done"
-CLOSE #1
-SYSTEM
-
-SUB Say (s AS STRING)
-  PRINT s
-  PRINT #1, s
-END SUB
-```
-
-Output (`OUTPUT1.TXT`):
-
-```
-QLOADER 1/2: parameters and results of DEMO.QLB
-ADDONE(41), by reference: x% = 42
-SUMI%(1000, 234) -> AX = 1234
-SUML&(70000, 5) -> DX:AX = 70005
-ADDBV%(7, 8), BYVAL -> AX = 15
-SLEN%(t$), descriptor -> AX = 5
-UPCASE(t$) edits in place: HELLO
-FILLB, far pointer BYVAL: 16705 16705 16705 0
-COPYS!(2.5), hidden pointer: 2.5
-COPYD#(1234.5678), hidden ptr: 1234.5678
-done
-```
-
-Rules the assembler side must follow (`QLBWRT.MD` shows the
-code): every routine ends with `retf 2*n` (`n` = number of words
-pushed, the hidden pointer counts), keeps `BP`, `SI`, `DI`, `DS`
-and `SS:SP`, and loads `DS` itself before it touches its own
-data. A wrong `retf n` corrupts the stack of QuickBASIC.
-
-## A4. Errors raised by the library
-
-A routine can raise a BASIC run-time error through QuickBASIC's
-own service (`BX` = code, service 34, `QLBFMT.MD` section 11).
-It looks to the BASIC program like any other error:
-
-```basic
-DECLARE SUB Say (s AS STRING)
-DECLARE SUB RAISEERR (BYVAL code AS INTEGER)
-DECLARE FUNCTION SYMSEG% ()
-DECLARE FUNCTION GETCNT% ()
-DECLARE FUNCTION GETSEL% (BYVAL i AS INTEGER)
-
-OPEN "RESULT2.TXT" FOR OUTPUT AS #1
-Say "QLOADER 2/2: imports from QB, phases"
+Say "cdiff%(10, 3), CDECL -> AX =" + STR$(cdiff%(10, 3))
 
 Say "SYMSEG% reads DS:00D3 = " + HEX$(SYMSEG%)
 
@@ -238,46 +200,54 @@ SUB Say (s AS STRING)
 END SUB
 ```
 
-Output (`OUTPUT2.TXT`):
+Output (`OUTPUT.TXT`):
 
 ```
-QLOADER 2/2: imports from QB, phases
-SYMSEG% reads DS:00D3 = 9FF3
+QLOADER: calling DEMO.QLB (NASM) from QuickBASIC
+ADDONE(41), by reference: x% = 42
+SUMI%(1000, 234) -> AX = 1234
+SUML&(70000, 5) -> DX:AX = 70005
+ADDBV%(7, 8), BYVAL -> AX = 15
+SLEN%(t$), descriptor -> AX = 5
+UPCASE(t$) edits in place: HELLO
+FILLB, far pointer BYVAL: 16705 16705 16705 0
+COPYS!(2.5), hidden pointer: 2.5
+COPYD#(1234.5678), hidden ptr: 1234.5678
+cdiff%(10, 3), CDECL -> AX = 7
+SYMSEG% reads DS:00D3 = 9FE6
 BASIC error 5 raised by the library
 RAISEERR(5) returned, RESUME NEXT
 selectors seen by start (hex): 6 0 0
 done
 ```
 
-`ON ERROR GOTO` sees `ERR = 5`; `RESUME NEXT` continues with the
-statement after `CALL RAISEERR`. Without a handler QuickBASIC
-shows its normal error box. `SYMSEG` shows a variable of QB read
-by the library (`DS:00D3`, the segment of the symbol block), and
-the last line shows the life-cycle selectors that reached the
-library's start-up procedure while this program ran: `6`
-(AllocDataImage), `0` (Init), `0` (Init again, when the program
-starts); `2` (Term) follows when the program ends.
+## A4. Errors raised by the library
+
+A routine can raise a BASIC run-time error through QuickBASIC's
+own service (`BX` = code, service 34, `QLBFMT.MD` section 11);
+`RAISEERR` in the program above does it. It looks to the BASIC
+program like any other error: `ON ERROR GOTO` sees `ERR = 5` and
+`RESUME NEXT` continues with the statement after `CALL
+RAISEERR`. Without a handler QuickBASIC shows its normal error
+box. `SYMSEG` shows a variable of QB read by the library
+(`DS:00D3`, the segment of the symbol block), and the last line
+shows the life-cycle selectors that reached the library's
+start-up procedure while the program ran: `6` (AllocDataImage),
+`0` (Init), `0` (Init again, when the program starts); `2`
+(Term) follows when the program ends.
 
 ## A5. Things that went wrong in practice
 
-* **A BASIC reserved word as the name of a parameter in
-  `DECLARE` hangs the QB editor.** `BYVAL off AS INTEGER` froze
-  QuickBASIC 4.50; `ofs` works. Use names that are not keywords.
-* **Unexplained freeze.** With `DEMO.QLB` (14 routines) some
-  programs with 10 to 12 call sites hung QuickBASIC 4.50 before
-  the first statement ran (the library had received only
-  selectors `06h` and `00h`), while other programs with 10 call
-  sites ran, and removing any one call from a hanging program
-  made it run. The reason was not found: `ALOADER` gets the
-  correct answer for all 13 names, so the name table is right,
-  and an earlier test library with 40 trivial routines called
-  once each worked. `DEMO.BAS` was therefore split into two
-  programs of at most nine call sites. If QuickBASIC freezes at
-  start, shorten the program and try again before you suspect
-  your routines.
-* A routine that does not remove its arguments, or removes the
-  wrong number, or a dispatcher that ends selector 08h-10h with
-  `retf` instead of `retf 2`, hangs QuickBASIC.
+* A BASIC reserved word as a routine or parameter name in
+  `DECLARE` (`off`, `exit`) hangs the QB editor; use other
+  names.
+* A `CDECL` name that is exported without the underscore, or a
+  plain name that is exported with one, is "not found" (the same
+  dialog as for any unknown name); use `ALIAS`.
+* A routine that removes the wrong number of arguments, or a
+  library whose dispatcher does not free the name (`QLBFMT.MD`
+  section 12), hangs QuickBASIC. The list of causes is in
+  `QLBWRT.MD` section 8.
 
 ---
 
@@ -313,33 +283,35 @@ run (`ALOADER\OUTPUT.TXT`):
 ALOADER: loads a .QLB, plays the part of QuickBASIC
 library file: DEMO.QLB
   block segment   = 0B8D
-  block paragraphs= 037A
-  w2 code paras   = 0036
-  w3 data end     = 0371
-  w4 symbol bytes = 0081
-  data segment    = 0BC3
+  block paragraphs= 038C
+  w2 code paras   = 003B
+  w3 data end     = 0376
+  w4 symbol bytes = 0159
+  data segment    = 0BC8
   D (tail offset) = 3360
   T (tail bytes)  = 0050
-  relocations     = 33
+  relocations     = 51
 checks passed: QB header, segments, b_ULVars.
 -- phases QuickBASIC runs when it loads a library --
   dispatcher CX = 0006
   dispatcher CX = 0010 (GETCOMMON): none (AX=BX=DX=0)
   dispatcher CX = 0000
 -- GETPROC (0Ah) once for every name called --
-  GETPROC ADDONE -> 0B8D:004F
-  GETPROC SUMI -> 0B8D:005B
-  GETPROC SUML -> 0B8D:006C
-  GETPROC ADDBV -> 0B8D:0083
-  GETPROC SLEN -> 0B8D:0090
-  GETPROC UPCASE -> 0B8D:009C
-  GETPROC FILLB -> 0B8D:00C1
-  GETPROC COPYS -> 0B8D:00DB
-  GETPROC COPYD -> 0B8D:00F6
-  GETPROC RAISEERR -> 0B8D:0115
-  GETPROC SYMSEG -> 0B8D:0128
-  GETPROC GETCNT -> 0B8D:012C
-  GETPROC GETSEL -> 0B8D:0137
+  GETPROC ADDONE -> 0B8E:004F
+  GETPROC SUMI -> 0B8E:005B
+  GETPROC SUML -> 0B8E:006C
+  GETPROC ADDBV -> 0B8E:0083
+  GETPROC SLEN -> 0B8E:0090
+  GETPROC UPCASE -> 0B8E:009C
+  GETPROC FILLB -> 0B8E:00C1
+  GETPROC COPYS -> 0B8E:00DB
+  GETPROC COPYD -> 0B8E:00F6
+  GETPROC RAISEERR -> 0B8E:0120
+  GETPROC SYMSEG -> 0B8E:012F
+  GETPROC GETCNT -> 0B8E:013A
+  GETPROC GETSEL -> 0B8E:0145
+  GETPROC CDIFF (CDECL) -> 0B8E:0115
+  GETPROC NOSUCH -> 0000:0000
 -- the program starts --
   dispatcher CX = 0000
 -- the program calls the library --
@@ -352,7 +324,8 @@ checks passed: QB header, segments, b_ULVars.
   FILLB(seg, ofs, 6, 65) wrote AAAAAA
   COPYS(2.5) result bytes (hex) = 40200000, AX = pointer 0448
   COPYD(2.5) result bytes (hex) = 4004000000000000
-  SYMSEG reads DS:00D3 = 0EFE (the segment of the symbol block)
+  CDIFF(10, 3) CDECL returns AX = 7
+  SYMSEG reads DS:00D3 = 0F03 (the segment of the symbol block)
   RAISEERR(5): BASIC error via gateway 34, ERR = 5
 -- the program ends --
   dispatcher CX = 0002
@@ -386,13 +359,12 @@ block released with AH=49h.
 done.
 ```
 
-Libraries made by Microsoft's `LINK /Q` contain a runtime
-(`BQLB45.LIB`) that calls QuickBASIC's services through the
-gateway (heap allocation, error handling). `ALOADER` provides
-the gateway but implements only service 34 (raise an error), so
-for such a library it stops after the checks (`/L`) and does not
-run the life cycle. The libraries made by `RLINK` need nothing
-else and run completely.
+A library made by Microsoft's `LINK /Q` has a runtime
+(`BQLB45.LIB`) that calls more QuickBASIC services through the
+gateway (heap allocation, error handling). `ALOADER` implements
+only service 34 (raise an error), so it loads and checks such a
+library (`/L`) but does not run its life cycle. A library made
+by `RLINK` needs nothing else and runs completely.
 
 ## B1. Block and variables
 
@@ -407,15 +379,14 @@ at +w3             symbol block, w4 bytes
                    segment qseg + w3
 ```
 
-A relocation entry of the file adds the same `qseg` to every
-word, because all three regions are in the one block
-(`QLBFMT.MD` section 7). `datseg` is the segment that is passed
-to the library as "QB's data segment": the library finds its
-tail there at offset `D`, and the bytes below `D` are the place
-for QuickBASIC's variables, which `ALOADER` fills in (`qbenv`)
-and uses as scratch for the arguments (`ARGS`). `D` must be at
-least `0500h` for this (`3360h` in RLINK libraries, `3317h` in
-Microsoft's).
+Every relocation entry adds the same `qseg`, because all three
+regions are in one block (`QLBFMT.MD` section 7; QuickBASIC uses
+two bases). `datseg` is the segment passed to the library as
+"QB's data segment": the tail is at offset `D`, and the bytes
+below `D` hold QuickBASIC's variables, which `ALOADER` fills in
+(`qbenv`), and the scratch area for the arguments (`ARGS`). This
+needs `D` of at least `0500h`; real libraries have `3360h`
+(RLINK) or `3317h` (Microsoft).
 
 ## B2. Load: read, allocate, read, relocate
 
@@ -885,6 +856,10 @@ getproc:
         mov     ds, ax
         push    bx
         xor     dx, dx
+        cmp     byte [cs:cflag], 0
+        je      .nf
+        mov     dx, 0x40
+.nf:
         mov     cx, 0Ah
         call    far [cs:vars]
         mov     [cs:r_ax], ax
@@ -901,8 +876,11 @@ resolve:
         mov     si, names
         xor     di, di
 .n:
-        cmp     byte [si], 0
+        mov     al, [si]
+        cmp     al, 0FFh
         je      .end
+        inc     si
+        mov     [cs:cflag], al
         mov     [cs:cur], si
         call    getproc
         mov     [cs:fntab+di], ax
@@ -913,6 +891,11 @@ resolve:
         call    puts
         mov     dx, [cs:cur]
         call    putz
+        cmp     byte [cs:cflag], 0
+        je      .nc
+        mov     dx, m_cdecl
+        call    puts
+.nc:
         mov     dx, m_arrow
         call    puts
         pop     di
@@ -934,14 +917,19 @@ resolve:
 
 The descriptor `{length, pointer}` and the text of the name live
 in the data segment the library sees (`GPDESC`, `GPNAME` inside
-`ARGS`). `DX` is the flag (`DX = 0`: no dot conversion). The
-result `DX:AX` is the far address of the routine (`0:0` =
-unknown); `ALOADER` keeps it in `fntab`.
+`ARGS`). `DX` is the flag: `0040h` for a `CDECL` name (`CDIFF`
+in the demo), otherwise 0. The result `DX:AX` is the far address
+of the routine (`0:0` = unknown, `NOSUCH` in the demo);
+`ALOADER` keeps it in `fntab`. The library frees the name itself
+through service 26 (`QLBFMT.MD` section 12); the gateway of
+`ALOADER` ignores that call, because its string is not in a
+heap.
 
 If you do not want to start the library (for a tool that only
 lists it), walk the **CODE table** yourself, as `showtab` does
 (it works only for libraries whose writer filled the table;
-RLINK libraries have an empty one):
+RLINK fills it, only a library linked with `/nonames` has an
+empty one):
 
 ```nasm
 showtab:
@@ -1104,9 +1092,8 @@ qbsvc:
         jmp     word [cs:gres]
 ```
 
-Any other service number just returns here; a loader for
-libraries that use more services has to implement them (the
-numbers are in `QLBFMT.MD` section 11).
+Any other service number just returns; the numbers are in
+`QLBFMT.MD` section 11.
 
 ## B5. The life cycle (phases) with codes
 
@@ -1224,13 +1211,11 @@ phase10:
         ret
 ```
 
-What the RLINK dispatcher does with them: `0Ah` and `10h` are
-answered by the dispatcher itself; every other selector is
-passed to the **entry procedure** of the library (`start` in
-`DEMO.ASM`), which therefore sees `6, 0, 0, 2` and later `4` in
-this run. `DEMO.ASM` records them and a routine `GETSEL` hands
-them back, which is the last line of the output ("selectors seen
-by start (hex): 0006 0000 0000 0002").
+The RLINK dispatcher answers `0Ah` and `10h` itself and passes
+every other selector to the **entry procedure** (`start` in
+`DEMO.ASM`), which therefore sees `6, 0, 0, 2` and, from
+`ALOADER`, `4`; `DEMO.ASM` records them and `GETSEL` hands them
+back (the last line of the output).
 
 ## B6. Calling the routines
 
@@ -1238,8 +1223,8 @@ The arguments are built **in the data segment that the library
 sees**, because BASIC passes near pointers (`ARGS` is a scratch
 area inside the free part of the region). DS is set to that
 segment before the call and `gcall` makes the call; after the
-call the program reads the result. The five cases of the table
-in A3 are all here:
+call the program reads the result. Every case of the table in A3
+is here, plus `CDECL`:
 
 ```nasm
 demo:
@@ -1392,6 +1377,17 @@ demo:
         call    crlf
 
         call    setds
+        mov     ax, 3
+        push    ax
+        mov     ax, 10
+        push    ax
+        gcall   4, F_CDIFF
+        add     sp, 4
+        call    rds
+        mov     dx, t_cdiff
+        call    kvd
+
+        call    setds
         gcall   0, F_SYMSEG
         mov     [cs:r_ax], ax
         call    rds
@@ -1429,6 +1425,8 @@ demo:
 * by reference: `push` the near pointers, in the order of the
   arguments; the routine removes them (`gcall 4, F_SUMI`: 4
   bytes of arguments);
+* `CDECL`: `push` the arguments right to left, the *caller*
+  removes them (`add sp, 4` after `CDIFF`);
 * BYVAL: `push` the values;
 * a far pointer BYVAL: the segment first, then the offset
   (`FILLB`);
@@ -1465,10 +1463,6 @@ the library is still alive.
   and checks them.
 * It does not implement `08h` (CONERR), `0Ch`, `0Eh`; nobody
   calls them in these runs.
-* It places the data tail inside one block with the other
-  regions, so that one base is added to every relocation;
-  QuickBASIC puts the tail at the end of its own data segment
-  and the code in a separate block, with two bases.
 
 ---
 

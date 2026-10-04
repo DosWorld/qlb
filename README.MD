@@ -1,6 +1,6 @@
 # QLB - QuickBASIC Quick Library (.QLB) format
 
-This project is the result of reverse engineering of the **Quick
+This folder is the result of reverse engineering of the **Quick
 Library** format of Microsoft QuickBASIC 4.0 / 4.5: the file
 format, how QuickBASIC loads a library, how it calls into it,
 and how to write one. Everything is written down, checked
@@ -52,16 +52,16 @@ PRINT SUMI%(1000, 234)     ' assembler routine from MYLIB.QLB
   - useful, but niche. A `.QLB` is a relocatable module with
   named exports, its own data segment, a list of relocations and
   life-cycle hooks, loadable **without `EXEC`**, at any address,
-  by about 450 lines of 8086 assembler (`ALOADER\ALOADER.ASM`).
-  You can use it as an overlay, plug-in, driver or
-  script-extension container for your own DOS software, and any
-  QuickBASIC 4.x user can load the same file. Its limits: one 64
-  KB data segment laid out for QuickBASIC 4.5, no import table
-  (a library can take only what QuickBASIC offers at fixed
-  places), names found through a dispatcher, and RLINK and
-  Microsoft `LINK /Q` as the only writers. If you do not care
-  about QuickBASIC, a plain RDF or MZ overlay with your own
-  loader is simpler.
+  by a small 8086 assembler loader (`ALOADER\ALOADER.ASM`). You
+  can use it as an overlay, plug-in, driver or script-extension
+  container for your own DOS software, and any QuickBASIC 4.x
+  user can load the same file. Its limits: one 64 KB data
+  segment laid out for QuickBASIC 4.5, no import table (a
+  library can take only what QuickBASIC offers at fixed places),
+  names found through a dispatcher, and RLINK and Microsoft
+  `LINK /Q` as the only writers. If you do not care about
+  QuickBASIC, a plain RDF or MZ overlay with your own loader is
+  simpler.
 * **For preservation**: the format was undocumented; now it is
   documented and checked by working code.
 
@@ -85,16 +85,21 @@ PRINT SUMI%(1000, 234)     ' assembler routine from MYLIB.QLB
     (stack frames for every parameter type, return values), the
     life cycle hook, imports, data, linking with `rlink qlb`,
     testing, hang checklist, writing a `.QLB` without RLINK.
+* [`MSRT.LST`](MSRT.LST)
+  - what it is: **Disassembly of the runtime that Microsoft's
+    `LINK /Q` embeds** (dispatcher, `GETPROC`, service thunks,
+    `Init`, `Term` ...), annotated, with the variables of
+    QuickBASIC's data segment.
 
 ## The demos (built: `.QLB`, and `.EXE` for the loader)
 
 * `QLOADER\`
   - content: A **QuickBASIC program calls a library written in
     NASM**, with parameters of every kind. `DEMO.ASM` (the
-    library), `DEMO.QLB` (built), `DEMO.BAS`, `DEMO2.BAS` (the
-    BASIC programs), `MAKE.BAT`, `RUN.BAT`, `OUTPUT1.TXT`,
-    `OUTPUT2.TXT` (output of the runs under QuickBASIC 4.50). It
-    needs `QB.EXE` to run: a `.QLB` is not an `.EXE`.
+    library), `DEMO.QLB` (built), `DEMO.BAS` (the BASIC
+    program), `MAKE.BAT`, `RUN.BAT`, `OUTPUT.TXT` (output of the
+    run under QuickBASIC 4.50). It needs `QB.EXE` to run: a
+    `.QLB` is not an `.EXE`.
 * `ALOADER\`
   - content: A **DOS program in NASM that loads a `.QLB` and
     calls it**, playing the part of QuickBASIC, **with all the
@@ -116,6 +121,19 @@ cd ..\QLOADER
 qb /l DEMO.QLB /run DEMO.BAS   same routines from BASIC
                               (needs QuickBASIC 4.5 or 4.0)
 ```
+
+## RLINK and the QLB format
+
+The linker `rlink qlb` of RTools follows these findings:
+
+* **Imports.** A module may `extern` the names of QuickBASIC
+  (`B$RUNERR`, `B$ERR_FC`, `b_errnum`, `b_ULSymSeg` ...); RLINK
+  builds the thunks and data symbols itself (`DEMO.ASM` uses
+  it).
+* **Lookup.** Like Microsoft's runtime: `CDECL` names get the
+  underscore, case is ignored, the temporary name string is
+  freed (`QLBFMT.MD` section 12), and the CODE table lists the
+  exported names.
 
 ## Rebuild
 
@@ -141,27 +159,18 @@ rlink mzs /o=ALOADER.EXE ALOADER.RDF
 
 ## Known problems and open points
 
-* With `DEMO.QLB`, some BASIC programs with 10 or more call
-  sites froze QuickBASIC 4.50 before they started; the reason is
-  not known (`QLBUSE.MD` A5). `DEMO.BAS` is split in two
-  programs.
 * Only **one** library can be loaded by QuickBASIC (`/L` twice
   prints the usage line); all modules have to be linked into
   one.
 * Not examined: selectors `04h 08h 0Ch 0Eh` at run time, STRING
-  function results, far data/BSS areas of the library,
-  QuickBASIC PDS at run time.
-* `ALOADER` runs libraries whose runtime needs only service 34
-  of QuickBASIC (libraries made by RLINK); libraries made by
-  Microsoft `LINK /Q` are loaded and checked but their runtime
-  is not started.
+  function results, far data/BSS areas, QuickBASIC PDS at run
+  time.
+* `ALOADER` runs libraries made by RLINK; libraries made by
+  `LINK /Q` are loaded and checked only.
 
 ## License
 
-`(c) Copyright DosWorld 2026`. Public domain: the **Unlicense**,
-full text in [`LICENSE.TXT`](LICENSE.TXT).
-
-Microsoft, QuickBASIC and MS-DOS are trademarks of
-Microsoft Corporation; this project is not affiliated with
-Microsoft and contains no Microsoft code or files (`QB.QLB` is
-not included; it is only read by the loader in the test).
+`(c) DosWorld 2026`. Public domain: the **Unlicense**, full text
+in [`LICENSE.TXT`](LICENSE.TXT) and in the header of every
+source file. Microsoft, QuickBASIC and MS-DOS are trademarks of
+Microsoft Corporation.

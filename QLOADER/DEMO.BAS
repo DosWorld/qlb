@@ -38,9 +38,14 @@ DECLARE SUB UPCASE (s AS STRING)
 DECLARE SUB FILLB (BYVAL sg%, BYVAL ofs%, BYVAL n%, BYVAL v%)
 DECLARE FUNCTION COPYS! (a AS SINGLE)
 DECLARE FUNCTION COPYD# (a AS DOUBLE)
+DECLARE FUNCTION cdiff% CDECL (BYVAL a%, BYVAL b%)
+DECLARE SUB RAISEERR (BYVAL code%)
+DECLARE FUNCTION SYMSEG% ()
+DECLARE FUNCTION GETCNT% ()
+DECLARE FUNCTION GETSEL% (BYVAL i%)
 
 OPEN "RESULT.TXT" FOR OUTPUT AS #1
-Say "QLOADER 1/2: parameters and results of DEMO.QLB"
+Say "QLOADER: calling DEMO.QLB (NASM) from QuickBASIC"
 
 x% = 41
 CALL ADDONE(x%)
@@ -69,9 +74,29 @@ Say "COPYS!(2.5), hidden pointer:" + STR$(COPYS!(f!))
 d# = 1234.5678#
 Say "COPYD#(1234.5678), hidden ptr:" + STR$(COPYD#(d#))
 
+Say "cdiff%(10, 3), CDECL -> AX =" + STR$(cdiff%(10, 3))
+
+Say "SYMSEG% reads DS:00D3 = " + HEX$(SYMSEG%)
+
+ON ERROR GOTO Handler
+CALL RAISEERR(5)
+Say "RAISEERR(5) returned, RESUME NEXT"
+ON ERROR GOTO 0
+
+n% = GETCNT%
+s$ = ""
+FOR i% = 0 TO n% - 1
+  s$ = s$ + " " + HEX$(GETSEL%(i%))
+NEXT
+Say "selectors seen by start (hex):" + s$
+
 Say "done"
 CLOSE #1
 SYSTEM
+
+Handler:
+Say "BASIC error" + STR$(ERR) + " raised by the library"
+RESUME NEXT
 
 SUB Say (s AS STRING)
   PRINT s

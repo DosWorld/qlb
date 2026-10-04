@@ -1,6 +1,0 @@
-QLOADER 2/2: imports from QB, phases
-SYMSEG% reads DS:00D3 = 9FF3
-BASIC error 5 raised by the library
-RAISEERR(5) returned, RESUME NEXT
-selectors seen by start (hex): 6 0 0
-done

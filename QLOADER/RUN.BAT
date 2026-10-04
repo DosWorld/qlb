@@ -32,5 +32,3 @@ REM <https://unlicense.org>
 @echo off
 qb /l DEMO.QLB /run DEMO.BAS
 type RESULT.TXT
-qb /l DEMO.QLB /run DEMO2.BAS
-type RESULT2.TXT

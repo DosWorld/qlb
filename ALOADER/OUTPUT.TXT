@@ -1,33 +1,35 @@
 ALOADER: loads a .QLB, plays the part of QuickBASIC
 library file: DEMO.QLB
   block segment   = 0B8D
-  block paragraphs= 037A
-  w2 code paras   = 0036
-  w3 data end     = 0371
-  w4 symbol bytes = 0081
-  data segment    = 0BC3
+  block paragraphs= 038C
+  w2 code paras   = 003B
+  w3 data end     = 0376
+  w4 symbol bytes = 0159
+  data segment    = 0BC8
   D (tail offset) = 3360
   T (tail bytes)  = 0050
-  relocations     = 33
+  relocations     = 51
 checks passed: QB header, segments, b_ULVars.
 -- phases QuickBASIC runs when it loads a library --
   dispatcher CX = 0006
   dispatcher CX = 0010 (GETCOMMON): none (AX=BX=DX=0)
   dispatcher CX = 0000
 -- GETPROC (0Ah) once for every name called --
-  GETPROC ADDONE -> 0B8D:004F
-  GETPROC SUMI -> 0B8D:005B
-  GETPROC SUML -> 0B8D:006C
-  GETPROC ADDBV -> 0B8D:0083
-  GETPROC SLEN -> 0B8D:0090
-  GETPROC UPCASE -> 0B8D:009C
-  GETPROC FILLB -> 0B8D:00C1
-  GETPROC COPYS -> 0B8D:00DB
-  GETPROC COPYD -> 0B8D:00F6
-  GETPROC RAISEERR -> 0B8D:0115
-  GETPROC SYMSEG -> 0B8D:0128
-  GETPROC GETCNT -> 0B8D:012C
-  GETPROC GETSEL -> 0B8D:0137
+  GETPROC ADDONE -> 0B8E:004F
+  GETPROC SUMI -> 0B8E:005B
+  GETPROC SUML -> 0B8E:006C
+  GETPROC ADDBV -> 0B8E:0083
+  GETPROC SLEN -> 0B8E:0090
+  GETPROC UPCASE -> 0B8E:009C
+  GETPROC FILLB -> 0B8E:00C1
+  GETPROC COPYS -> 0B8E:00DB
+  GETPROC COPYD -> 0B8E:00F6
+  GETPROC RAISEERR -> 0B8E:0120
+  GETPROC SYMSEG -> 0B8E:012F
+  GETPROC GETCNT -> 0B8E:013A
+  GETPROC GETSEL -> 0B8E:0145
+  GETPROC CDIFF (CDECL) -> 0B8E:0115
+  GETPROC NOSUCH -> 0000:0000
 -- the program starts --
   dispatcher CX = 0000
 -- the program calls the library --
@@ -40,7 +42,8 @@ checks passed: QB header, segments, b_ULVars.
   FILLB(seg, ofs, 6, 65) wrote AAAAAA
   COPYS(2.5) result bytes (hex) = 40200000, AX = pointer 0448
   COPYD(2.5) result bytes (hex) = 4004000000000000
-  SYMSEG reads DS:00D3 = 0EFE (the segment of the symbol block)
+  CDIFF(10, 3) CDECL returns AX = 7
+  SYMSEG reads DS:00D3 = 0F03 (the segment of the symbol block)
   RAISEERR(5): BASIC error via gateway 34, ERR = 5
 -- the program ends --
   dispatcher CX = 0002

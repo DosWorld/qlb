@@ -72,11 +72,9 @@ nasm -s -f rdf ALOADER.ASM
 rlink mzs /o=ALOADER.EXE ALOADER.RDF
 ```
 
-Microsoft's own way, for objects written in C or MASM, is `LINK
-/Q yourlib.LIB,yourlib.QLB,NUL,BQLB45.LIB;` (`QLB.MD` section 11
-of the RTools repository). It produces a library whose CODE
-table lists the names and whose runtime comes from `BQLB45.LIB`.
-This guide is about the RLINK way.
+Microsoft's way, for objects written in C or MASM, is `LINK /Q
+yourlib.LIB,yourlib.QLB,NUL,BQLB45.LIB;`; its runtime comes from
+`BQLB45.LIB` (`MSRT.LST`). This guide is about the RLINK way.
 
 ## 2. The shape of a library source
 
@@ -112,11 +110,43 @@ ADDONE:
 * Every routine is called with `call far`, so it ends with
   `retf`, or `retf 2*n` if it has `n` words of arguments
   (sections 3 and 4).
-* `start` is exported too, so BASIC could `CALL start`; do not.
-* Exports are limited by the hash table: at most about 2000-2500
-  names (`Too many symbols.`, `QLBFMT.MD` section 13).
-* Code, data and bss of one module are each limited to 64 KB;
-  the library as a whole may be larger (tested: 80 KB).
+* Exports are limited to about 2000-2500 names (`Too many
+  symbols.`, `QLBFMT.MD` section 13); code, data and bss of one
+  module to 64 KB each, the library as a whole may be larger
+  (tested: 80 KB).
+
+### 2.1 Names, underscores and CDECL
+
+A routine in C style has an underscore in front of its name
+(`_foo`). Two ways to reach it (rules in `QLBFMT.MD` section
+12):
+
+```basic
+DECLARE FUNCTION foo% CDECL (BYVAL a%, BYVAL b%)
+DECLARE FUNCTION foo2% ALIAS "_foo" (BYVAL a%, BYVAL b%)
+```
+
+`CDECL` makes the runtime look for `_foo`, and the routine is
+called with the C convention: arguments pushed **right to
+left**, so the first one is at `[bp+6]`, by reference unless
+`BYVAL`; it returns with a plain `retf` because the caller
+removes the arguments:
+
+```nasm
+_foo:
+        push    bp
+        mov     bp, sp
+        mov     ax, [bp+6]
+        sub     ax, [bp+8]
+        pop     bp
+        retf
+```
+
+(`foo(10, 3)` gives 7.) The second declaration reaches the same
+symbol with the BASIC convention (`retf 2*n`, section 3). A
+routine exported without the underscore (`FOO`) is declared
+plainly, `DECLARE FUNCTION foo ()`. Do not use BASIC keywords
+(`EXIT`, `OFF`, ...) as names of routines or parameters.
 
 ## 3. The stack frame of a routine
 
@@ -137,11 +167,11 @@ removes them. After the usual prologue:
 ```
 
 So a routine with `n` words of arguments ends with `pop bp` and
-`retf 2*n`. **Wrong `n` breaks the stack of QuickBASIC.** The
-registers: keep `BP`, `SI`, `DI`, `DS` and `SS:SP`; `AX BX CX DX
-ES` and the flags are free. Use `cld` before string
-instructions. DS is the **data segment of QuickBASIC**, not
-yours; to reach your own data load it (section 6).
+`retf 2*n`. **Wrong `n` breaks the stack of QuickBASIC.** Keep
+`BP`, `SI`, `DI`, `DS` and `SS:SP`; `AX BX CX DX ES` and the
+flags are free; use `cld` before string instructions. DS is the
+**data segment of QuickBASIC**, not yours; load your own to
+reach your data (section 6).
 
 ### 3.1 Reference parameters (the default)
 
@@ -253,7 +283,7 @@ UPCASE:
 ```
 
 (A routine that *returns* a string, or changes the length, has
-to use QuickBASIC's string heap; that was not examined.)
+to use QuickBASIC's string heap; not examined.)
 
 ### 3.4 Far pointers: addresses of arrays and variables
 
@@ -347,46 +377,64 @@ A library has no import table; it uses the fixed places of
 QuickBASIC's data segment (`QLBFMT.MD` section 11). DS is that
 segment while a routine runs.
 
-* **Reading a variable of QB.** `DS:00D3` holds the segment of
-  the library's symbol block (QB writes it when it loads the
-  library). A routine that returns it:
+With `rlink qlb` a module just **declares the names with
+`extern`** and RLINK resolves them: it writes a small module
+with the thunks of the services and the data symbols of the
+variables, and links it. Nothing is added when a library does
+not use a name; a name that is not in the table and not exported
+is an error (`Could not resolve`). The table, with the numbers
+and offsets of QB 4.50, is in `DOC\QLB-IMP.MD` section 9; names
+are matched without regard to case.
+
+* **Reading a variable of QB.** `b_ULSymSeg` (`DS:00D3`) holds
+  the segment of the library's symbol block (QB writes it when
+  it loads the library). A variable is addressed through the
+  segment of its symbol, which RLINK sets to the QB data
+  segment; the routine loads `DS` with it:
 
 ```nasm
 SYMSEG:
-        mov     ax, [0D3h]
+        push    ds
+        mov     ax, seg b_ULSymSeg
+        mov     ds, ax
+        mov     ax, [b_ULSymSeg]
+        pop     ds
         retf
 ```
 
-  QuickBASIC's own variables are at fixed offsets: `DS:010Ah` =
-  `b_errnum`, `DS:010Ch` = `b_errlin`, `DS:0106h` = `b_errmod`,
-  `DS:0102h` = `b_erradr`. They are valid for QuickBASIC 4.50.
+  The other variables of the table: `b_errnum` (`010Ah`),
+  `b_errlin` (`010Ch`), `b_errmod` (`0106h`), `b_erradr`
+  (`0102h`), `b$ULDataLength`, `b$ULDataStart`, `b$pend`,
+  `b$CtrlFlags` ...; valid for QuickBASIC 4.50.
 
-* **Raising a BASIC run-time error.** `BX` = the error number,
-  `DI` = 34, `call far [DS:00C2h]`. This is QuickBASIC's
-  `B$RUNERR`; it does not return to you. The BASIC program sees
-  `ERR` = the number and can use `ON ERROR` / `RESUME NEXT`:
+* **Raising a BASIC run-time error.** `extern B$RUNERR`, `BX` =
+  the error number, `call far B$RUNERR`. It does not return to
+  you. The BASIC program sees `ERR` = the number and can use `ON
+  ERROR` / `RESUME NEXT`. The thunk needs `DS` = QuickBASIC's
+  data segment, which it is on entry to a routine (restore it
+  before the call if you changed it). The ready-made `B$ERR_FC`
+  (error 5), `B$ERR_OV` (6), `B$ERR_DV0` (11), `B$ERR_OM` (7) do
+  the same with the code built in:
 
 ```nasm
 RAISEERR:
         push    bp
         mov     bp, sp
         mov     bx, [bp+6]
-        push    di
-        mov     di, 22h
-        call    far [0C2h]
-        pop     di
+        call    far B$RUNERR
         pop     bp
         retf    2
 ```
 
-* **Other services of QuickBASIC** are reached the same way: a
-  number in `DI`, `call far [DS:00C2h]` (or `jmp far
-  [DS:00BEh]`). The numbers (`B$STDALC` 24, `B$IFHAlloc` 40,
-  `B$FHDealloc` 42, `B$ULReload`, `B$END` ...) are in
-  `QLBFMT.MD` section 11. Only service 34 was exercised for this
-  guide.
-* Everything else a QuickBASIC library "imports" - DOS, BIOS -
-  you reach through `INT 21h`, `INT 10h` ... in the usual way.
+* **Other services of QuickBASIC** (`B$STDALC`, `B$IFHAlloc`,
+  `B$FHDealloc`, `B$END` ...) are in the same table; their
+  registers were not examined, only `B$RUNERR`, the four
+  `B$ERR_*` and `B$STDALCTMP` (section 5) were executed.
+* **Without RLINK** the thunk is `push di / mov di,N / call far
+  [DS:00C2h] / pop di / retf` (or `mov bx,N / jmp far
+  [DS:00BEh]`) with the number `N` of `QLBFMT.MD` section 11.
+* DOS and BIOS are reached with `INT 21h`, `INT 10h` ... in the
+  usual way.
 
 ## 5. The life cycle: phases and their codes
 
@@ -438,11 +486,9 @@ the selector is pushed as a word parameter and is in `CX` too.
   - when QuickBASIC sends it: answered by the runtime, never
     reaches `start`
 
-Order measured on QuickBASIC 4.50: `06h`, `00h`, (`0Ah` for each
-name, answered by the runtime), `00h`, ... `02h`. **Init arrives
-twice.** An entry procedure that must be safe records nothing it
-cannot repeat. Selectors may be added by other QuickBASIC
-versions; unknown ones must just return (`retf 2`).
+The order is in `QLBFMT.MD` section 9. **Init arrives twice**,
+so what it does must be repeatable. Unknown selectors must just
+return (`retf 2`).
 
 The demo's `start` records every selector in a table and, at
 `02h` (Term), writes the table to the file `TRACE.TXT` with DOS
@@ -520,10 +566,22 @@ GETSEL:
         retf    2
 ```
 
-Writing your own dispatcher (without RLINK) means writing what
-`SRC\QBRT.ASM` of RTools has: the entry at `b_ULVars[0]`, `CX` =
-selector, `0Ah` and `10h` answered, everything else forwarded.
-Its core, unchanged from the repository:
+Your own dispatcher (without RLINK) is what `SRC\QBRT.ASM` of
+RTools has: the entry at `b_ULVars[0]`, `CX` = selector, `0Ah`
+and `10h` answered, everything else forwarded. A `GETPROC` does
+this (rules in `QLBFMT.MD` section 12):
+
+* read the name from the descriptor that the argument (`[bp+6]`
+  after `push bp / mov bp,sp`) points to;
+* with `DX` not zero, look for `_` + name; compare without
+  regard to case;
+* **free the name** with service 26 before it returns, or
+  QuickBASIC hangs after a dozen lookups;
+* answer the far address in `DX:AX` (relocated segment) or
+  `0:0`, and return with `retf 2`.
+
+The dispatcher and the lookup of RTools' runtime (comments left
+out):
 
 ```nasm
 disp:
@@ -547,23 +605,127 @@ getcommon:
         retf    2
 ```
 
+```nasm
+getproc:
+        push    bp
+        mov     bp, sp
+        push    si
+        push    di
+        push    es
+        push    ax
+        push    ax
+        cld
+        mov     bx, [bp+6]
+        mov     cx, [bx]
+        mov     si, [bx+2]
+        or      dx, dx
+        jz      .f0
+        mov     dl, 1
+.f0:    xor     dh, dh
+        push    cs
+        pop     es
+        push    cx
+        push    si
+        mov     ax, 1505h
+        or      dl, dl
+        jz      .h1
+        mov     ax, 0B604h
+.h1:    jcxz    .h9
+        mov     di, ax
+        lodsb
+        call    xform
+        xor     ah, ah
+        mov     bx, ax
+        mov     ax, di
+        shl     ax, 1
+        shl     ax, 1
+        shl     ax, 1
+        shl     ax, 1
+        shl     ax, 1
+        add     ax, di
+        add     ax, bx
+        dec     cx
+        jmp     short .h1
+.h9:    pop     si
+        pop     cx
+        mov     di, ax
+        or      ax, 8000h
+        mov     [bp-8], ax
+        mov     bx, [cs:htmask]
+        and     di, bx
+        shl     di, 1
+        shl     di, 1
+        mov     [bp-10], di
+.probe: mov     di, [bp-10]
+        mov     ax, [cs:di+htab]
+        or      ax, ax
+        jz      .none
+        cmp     ax, [bp-8]
+        jne     .nextslot
+        mov     bx, [cs:di+htab+2]
+        lea     di, [bx+4]
+        or      dl, dl
+        jz      .np
+        cmp     byte [es:di], '_'
+        jne     .nextslot
+        inc     di
+.np:    push    cx
+        push    si
+.cmp:   jcxz    .tail
+        lodsb
+        call    xform
+        scasb
+        jne     .miss
+        dec     cx
+        jmp     short .cmp
+.tail:  cmp     byte [es:di], 0
+.miss:  pop     si
+        pop     cx
+        jne     .nextslot
+        mov     ax, [es:bx]
+        mov     dx, [es:bx+2]
+        jmp     short .done
+.nextslot:
+        mov     bx, [cs:htmask]
+        shl     bx, 1
+        shl     bx, 1
+        or      bx, 3
+        mov     di, [bp-10]
+        add     di, 4
+        and     di, bx
+        mov     [bp-10], di
+        jmp     short .probe
+.none:  xor     ax, ax
+        xor     dx, dx
+.done:  add     sp, 4
+        push    ax
+        push    dx
+        mov     bx, [bp+6]
+        mov     di, 26
+        call    far [0C2h]
+        pop     dx
+        pop     ax
+        pop     es
+        pop     di
+        pop     si
+        pop     bp
+        retf    2
+```
+
 ## 6. Data
 
-* The library's `.data` and `.bss` of every module go to the
-  data tail (QB's data segment, offset `D = 3360h` and up);
-  `.bss` is stored as zero bytes in the file.
+* The `.data` and `.bss` of every module go to the data tail
+  (QB's data segment, offset `D = 3360h` and up); `.bss` is
+  stored as zero bytes.
 * **`.data` and `.bss` are separate segments with separate
   segment values.** A pointer made with `seg` in one and an
-  offset from the other addresses the wrong bytes (this was met:
-  a buffer in `.bss` and a file name in `.data` used together
-  under one `DS`). Keep what is used together in the same
-  section; the demo keeps everything in `.data`.
+  offset from the other addresses the wrong bytes. Keep what is
+  used together in the same section; the demo keeps everything
+  in `.data`.
 * DS on entry is QuickBASIC's. Load your own with `mov ax, seg
   label` / `mov ds, ax` and restore it (`push ds` ... `pop ds`)
   before you return. For data that is in the code segment use
   `cs:`.
-* The code image is writable memory but is treated as code: do
-  not keep variables there.
 * Static data is **not** reset when a BASIC program runs again.
   Reset it at `Init` (section 5).
 
@@ -588,20 +750,18 @@ rlink qlb /o=ALL.QLB A.RDF B.RDF C.RDF /entry=start
 * `/o=` the output, `/entry=` the name of the entry procedure
   (default `start`); the file name list is the modules, in this
   order (their code segments follow each other).
+* `/nonames` leaves the CODE table empty (it lists the exported
+  names otherwise).
 * If you see `Entry point start not found.` the RDF has no
   `global start`, or (with an old `RLINK`) the environment
   variable `TMP` is not set.
-* A library is **one file**. QuickBASIC loads one library only;
-  put every module you need into one `rlink qlb` run
-  (`QLBFMT.MD` section 13).
-* The data of all modules goes to QB's data segment at offset
-  3360h; the layout is for QuickBASIC 4.5 and 4.0 (`D` must be
-  at least QB's own data end, `3317h`).
+* QuickBASIC loads one library only: put every module you need
+  into one `rlink qlb` run (`QLBFMT.MD` section 13).
 
 The `makefile` of the examples (`TEST\QLB`, tabs):
 
 ```make
-all : HELLO.QLB
+all : HELLO.QLB IMPORT.QLB
 
 HELLO.QLB : HELLO.RDF HELLO2.RDF ..\..\BIN\RLINK.EXE
 	..\..\BIN\RLINK qlb /o=HELLO.QLB HELLO.RDF HELLO2.RDF
@@ -609,9 +769,14 @@ HELLO.RDF : HELLO.ASM
 	nasm -f rdf HELLO.ASM
 HELLO2.RDF : HELLO2.ASM
 	nasm -f rdf HELLO2.ASM
+IMPORT.QLB : IMPORT.RDF ..\..\BIN\RLINK.EXE
+	..\..\BIN\RLINK qlb /o=IMPORT.QLB IMPORT.RDF
+IMPORT.RDF : IMPORT.ASM
+	nasm -f rdf IMPORT.ASM
 clean:
 	DEL *.RDF
 	DEL HELLO.QLB
+	DEL IMPORT.QLB
 ```
 
 ## 8. Testing
@@ -635,10 +800,9 @@ clean:
 
 ### If QuickBASIC hangs
 
-The causes below are listed by how they were found: the reserved
-word, the `retf 2` rule for selectors and the freeze with many
-call sites were seen; the others are the usual consequences of
-the stack rules and were not each reproduced.
+Seen: the reserved word, the `retf 2` rule for selectors and the
+freeze with many call sites. The other causes follow from the
+stack rules and were not each reproduced.
 
 * hang when the first `CALL` is compiled / run
   - probable cause: the routine ends with the wrong `retf n`
@@ -654,9 +818,12 @@ the stack rules and were not each reproduced.
 * random crash after the call
   - probable cause: `DS`, `SI`, `DI` or `BP` not restored; a
     pointer into the wrong segment (`.bss` / `.data` mix)
-* freeze with 10 or more call sites
-  - probable cause: seen with `DEMO.QLB`, not understood
-    (`QLBUSE.MD` A5); split the program
+* freeze after a dozen `CALL`s, before the program starts
+  - probable cause: the dispatcher's `GETPROC` did not free the
+    name (service 26), `QLBFMT.MD` section 12
+* `CDECL` routine "not found"
+  - probable cause: the symbol has no leading underscore, or is
+    not exported
 * `Subprogram not defined`
   - probable cause: the name is not exported (`global` missing),
     or is not in a code segment
@@ -687,8 +854,7 @@ Everything is in `QLBFMT.MD`. In short, for a writer program:
    checks) and then with QuickBASIC.
 
 `SRC\RLOQBE.PAS` of RTools is a complete implementation
-(`QbeFinish`), `QLB.MD` of the repository has a reader in Python
-that checks every field.
+(`QbeFinish`).
 
 ## 10. Checklist before you ship a library
 

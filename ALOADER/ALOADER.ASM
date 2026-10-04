@@ -49,6 +49,7 @@
 %define F_SYMSEG 40
 %define F_GETCNT 44
 %define F_GETSEL 48
+%define F_CDIFF  52
 
 %macro need 1
         call    %1
@@ -87,7 +88,8 @@ r_dx    dw 0
 cur     dw 0
 vars    dd 0
 loadonly db 0
-fntab   times 13 dd 0
+cflag   db 0
+fntab   times 15 dd 0
 
 start:
         cld
@@ -942,6 +944,10 @@ getproc:
         mov     ds, ax
         push    bx
         xor     dx, dx
+        cmp     byte [cs:cflag], 0
+        je      .nf
+        mov     dx, 0x40
+.nf:
         mov     cx, 0Ah
         call    far [cs:vars]
         mov     [cs:r_ax], ax
@@ -956,8 +962,11 @@ resolve:
         mov     si, names
         xor     di, di
 .n:
-        cmp     byte [si], 0
+        mov     al, [si]
+        cmp     al, 0FFh
         je      .end
+        inc     si
+        mov     [cs:cflag], al
         mov     [cs:cur], si
         call    getproc
         mov     [cs:fntab+di], ax
@@ -968,6 +977,11 @@ resolve:
         call    puts
         mov     dx, [cs:cur]
         call    putz
+        cmp     byte [cs:cflag], 0
+        je      .nc
+        mov     dx, m_cdecl
+        call    puts
+.nc:
         mov     dx, m_arrow
         call    puts
         pop     di
@@ -1134,6 +1148,17 @@ demo:
         mov     ax, cx
         call    puthexw
         call    crlf
+
+        call    setds
+        mov     ax, 3
+        push    ax
+        mov     ax, 10
+        push    ax
+        gcall   4, F_CDIFF
+        add     sp, 4
+        call    rds
+        mov     dx, t_cdiff
+        call    kvd
 
         call    setds
         gcall   0, F_SYMSEG
@@ -1379,6 +1404,7 @@ m_resolve:
         db      13, 10, '$'
 m_gp            db '  GETPROC ', '$'
 m_arrow         db ' -> ', '$'
+m_cdecl         db ' (CDECL)', '$'
 m_start         db '-- the program starts --', 13, 10, '$'
 m_run:
         db      '-- the program calls the library --'
@@ -1397,6 +1423,7 @@ t_fillb         db '  FILLB(seg, ofs, 6, 65) wrote ', '$'
 t_copys         db '  COPYS(2.5) result bytes (hex) = ', '$'
 t_copyd         db '  COPYD(2.5) result bytes (hex) = ', '$'
 t_ptr           db ', AX = pointer ', '$'
+t_cdiff         db '  CDIFF(10, 3) CDECL returns AX = ', '$'
 t_symseg        db '  SYMSEG reads DS:00D3 = ', '$'
 t_same:
         db      ' (the segment of the symbol block)'
@@ -1425,20 +1452,22 @@ n_symbol        db 'SYMBOL', 0
 n_vars          db 'B_ULVARS', 0
 n_int86         db 'INT86OLD', 0
 
-names           db 'ADDONE', 0
-                db 'SUMI', 0
-                db 'SUML', 0
-                db 'ADDBV', 0
-                db 'SLEN', 0
-                db 'UPCASE', 0
-                db 'FILLB', 0
-                db 'COPYS', 0
-                db 'COPYD', 0
-                db 'RAISEERR', 0
-                db 'SYMSEG', 0
-                db 'GETCNT', 0
-                db 'GETSEL', 0
-                db 0
+names           db 0, 'ADDONE', 0
+                db 0, 'SUMI', 0
+                db 0, 'SUML', 0
+                db 0, 'ADDBV', 0
+                db 0, 'SLEN', 0
+                db 0, 'UPCASE', 0
+                db 0, 'FILLB', 0
+                db 0, 'COPYS', 0
+                db 0, 'COPYD', 0
+                db 0, 'RAISEERR', 0
+                db 0, 'SYMSEG', 0
+                db 0, 'GETCNT', 0
+                db 0, 'GETSEL', 0
+                db 1, 'CDIFF', 0
+                db 0, 'NOSUCH', 0
+                db 0FFh
 
 section .bss
 

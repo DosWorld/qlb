@@ -44,6 +44,9 @@
         global  SYMSEG
         global  GETCNT
         global  GETSEL
+        global  _CDIFF
+        extern  B$RUNERR
+        extern  b_ULSymSeg
 
         segment .text
 
@@ -210,19 +213,28 @@ COPYD:
         pop     bp
         retf    4
 
+_CDIFF:
+        push    bp
+        mov     bp, sp
+        mov     ax, [bp+6]
+        sub     ax, [bp+8]
+        pop     bp
+        retf
+
 RAISEERR:
         push    bp
         mov     bp, sp
         mov     bx, [bp+6]
-        push    di
-        mov     di, 22h
-        call    far [0C2h]
-        pop     di
+        call    far B$RUNERR
         pop     bp
         retf    2
 
 SYMSEG:
-        mov     ax, [0D3h]
+        push    ds
+        mov     ax, seg b_ULSymSeg
+        mov     ds, ax
+        mov     ax, [b_ULSymSeg]
+        pop     ds
         retf
 
 GETCNT:

@@ -300,7 +300,7 @@ the end of the previous one (the terminator is only that word).
   - at: `symStart`
   - flags: 1
   - content: exported code symbols. **May be empty** (just the
-    terminator) [M]: RLINK writes it empty.
+    terminator) [M]. RLINK fills it, `/nonames` leaves it empty.
 * DATA
   - at: `datStart`
   - flags: 2 (5 = absolute value)
@@ -334,8 +334,9 @@ the end of the previous one (the terminator is only that word).
   "private"; a BASIC name starts with a letter, so a name
   starting with `_` or `$` cannot be called from BASIC [M].
 * `LINK /Q` exports every public name except those that start
-  with `B$` or `b$`. RLINK exports nothing in the CODE table (it
-  keeps the names inside the runtime, `QLBWRT.MD`).
+  with `B$` or `b$`; RLINK exports every `global` code symbol
+  (`/nonames` leaves the table empty). Both keep the spelling of
+  the object (`_ArbAdd` stays `_ArbAdd`).
 
 ## 7. Memory model - where the three regions go
 
@@ -402,11 +403,11 @@ the block + 6); the six QB header words of section 5 (offsets 3,
 segment words of `b_ULVars`; every segment value in code and
 data (`mov ax, seg x`, far calls and jumps, far pointers). The
 sizes `w4`, `w6`, `w7`, `w9`, `w10` have no entry. Example:
-`HELLO.QLB` of section 15 has 18 entries: 3 in the code image
+`HELLO.QLB` of section 15 has 20 entries: 3 in the code image
 (segment 2), 3 in the data tail (the far pointers of `b_ULVars`,
-segment 034Ah) and 12 in the symbol block (segment 034Ch): the
-six header words and the segment word of the six table entries
-(1 DATA + 5 SEGMENT).
+segment 034Ah) and 14 in the symbol block (segment 034Ch): the
+six header words and the segment word of the eight table entries
+(2 CODE + 1 DATA + 5 SEGMENT).
 
 A loader SHOULD refuse an entry whose word is outside the three
 regions or straddles the end of a 64 KB segment (`ALOADER`
@@ -451,7 +452,8 @@ segment. The selectors, and what the dispatcher MUST do [M]:
 * 0Ah
   - name: **GETPROC**
   - arguments: near pointer to a BASIC string descriptor
-    `{length, pointer}`; DX = flag
+    `{length, pointer}` (a temporary string, section 12); DX =
+    flag (`0040h` for CDECL)
   - returns: far address in `DX:AX`, `0:0` if unknown
   - ends with: `retf 2`
 * 0Ch
@@ -533,6 +535,12 @@ it directly: `call far`, with the BASIC convention [M]:
   `AX`, `BX`, `CX`, `DX`, `ES` and the flags are free. Clear the
   direction flag before string instructions.
 * it runs on QB's stack; keep its use small.
+* **`CDECL` declarations** use the C convention [M]: the
+  arguments are pushed **right to left** (after `push bp / mov
+  bp,sp` the *first* argument is at `[bp+6]`), by reference
+  unless `BYVAL` is written, the routine ends with a plain
+  `retf` and the caller removes the arguments. The name that QB
+  looks up differs too (section 12).
 
 ## 11. What the library gets from QuickBASIC (imports)
 
@@ -566,26 +574,84 @@ QB it takes from fixed places that `LINK /Q` binds against
 * A name that is not provided by `BQLB45.LIB` cannot be
   imported: `LINK` reports `L2029 unresolved external` and
   writes a call to `0000:0000`.
+* **RLINK** resolves such imports itself: a module writes
+  `extern B$RUNERR` or `extern b_errnum`, RLINK writes the
+  thunks and the data symbols (table in `DOC\QLB-IMP.MD` section
+  9, use in `QLBWRT.MD` section 4). The services and variables
+  are those of QB 4.50.
 
 ## 12. How QuickBASIC finds a routine by name
 
-`GETPROC` (selector 0Ah) receives the name **as written in the
-BASIC source** (a dot kept, no prefix, no type suffix, no second
-try) and returns the far address in `DX:AX`. If the answer is
-`0:0`, QB stops with an error. Therefore a library may keep its
-names anywhere: a library with an **empty CODE table** whose
-dispatcher finds the names itself loads and works in 4.0 and 4.5
-[M]. Microsoft's runtime searches the CODE table (names
-upper-cased by QB, and when `DX` is not zero every `.` of the
-name is changed to `_`). RLINK's runtime uses a hash table:
-`hash = h*33 + c` over the upper-cased name, 16 bits, `h` starts
-at `1505h`, slot = `{hash OR 8000h, offset of the name entry}`,
-linear probing, `slots = 2^k >= 2 * names`; the runtime compares
-the name, so a collision never gives a wrong routine
-(`QLBWRT.MD`).
+QB calls `GETPROC` (selector 0Ah) **once for every `CALL`, SUB
+call and FUNCTION reference in the source, before the program
+runs** [M]. That includes the SUBs and FUNCTIONs that the BASIC
+program defines itself: the library answers `0:0` for them and
+QB uses its own. The argument is the name **as written in the
+source** (a dot kept, no type suffix, no second try), `DX` is a
+flag, and the library answers with the far address in `DX:AX` or
+`0:0`. If nothing defines the name, QB stops with an error (a
+dialog; a script sees a hang).
 
-The CODE-table path is what a *tool* or a loader of your own
-uses when it does not want to call the dispatcher (`QLBUSE.MD`).
+**What reaches `GETPROC`** [M] (QB 4.50, logging dispatcher):
+
+```
+DECLARE SUB HELLO ()                 "HELLO"  DX = 0000h
+DECLARE SUB HELLO CDECL ()           "HELLO"  DX = 0040h
+DECLARE SUB HELLO CDECL ALIAS "x" () "x"      DX = 0000h
+DECLARE SUB Hel.lo ()                "Hel.lo" DX = 0000h
+```
+
+`CDECL` sets `DX = 0040h`, and the library turns that into the
+underscore of a C symbol: a C routine `_foo` is declared
+`DECLARE FUNCTION foo CDECL`. `ALIAS "_foo"` reaches the same
+symbol with the BASIC convention. `FOO` (no underscore) is not
+found by `foo CDECL`, and `_foo` is not found by a plain `foo`,
+in Microsoft's libraries as in RLINK's. `ALIAS "foo" CDECL`
+looks for `foo` (the alias is passed as written, `DX = 0`).
+BASIC reserved words (`EXIT`, `OFF`, ...) cannot be routine
+names and hang the editor in a `DECLARE`.
+
+**The lookup of Microsoft's runtime** (read from `BQLB45.LIB`,
+`MSRT.LST`, and measured with libraries written by `LINK /Q`):
+
+1. If `DX` is not zero, the name becomes `_` + name. Every `.`
+   becomes `_` (read from the code).
+2. The name is searched in the **CODE table**, then in the
+   **DATA table** [M]. The comparison ignores case (QB
+   upper-cases the stored names), and the type word of the entry
+   is not looked at (set to `FFFFh` it still binds). Renaming an
+   entry (`_arbadd` to `_arbXdd`) makes it unfindable: for a
+   library without a dispatcher of its own the directory is what
+   QB reads.
+3. The answer is accepted when its segment is not below `w1`
+   (the code base); otherwise `0:0` (read from the code).
+
+**The name is a temporary string that the library MUST release**
+[M]. The descriptor `{length, pointer}` belongs to QuickBASIC's
+string space. The library frees it with the QB service
+`B$STDALCTMP` (`BX` = the descriptor, `DI` = 26, `call far
+[DS:00C2]`, section 11); `B$STDALCALLTMP` (28) works as well,
+while 0, 2, 22, 24 (`B$STDALC`) and 40 do not. Microsoft's
+runtime copies the name into a local string and frees that. A
+library that does not free it leaks one temporary string per
+lookup, and QB hangs after about a dozen lookups (12 lookups of
+an unknown name were fine, 30 hung, on 4.50 and 4.0); the more
+calls a program contains, the earlier it happens.
+
+**Where the names are kept.** A library may keep them anywhere:
+with an **empty CODE table** and a dispatcher that finds the
+names itself, it loads and works in 4.0 and 4.5; a dispatcher
+that answers `GETPROC` with the right far address binds without
+the directory [M]. RLINK's runtime uses a hash table: `hash =
+h*33 + c` over the upper-cased name, 16 bits, `h` starts at
+`1505h` (`0B604h` for `DX` not zero: the seed already includes
+the `_`); slot = `{hash OR 8000h, offset of the name entry}`,
+linear probing, `slots = 2^k >= 2 * names`; the stored names are
+upper case and keep their underscore, and the name itself is
+compared, so a collision never gives a wrong routine
+(`QLBWRT.MD` section 5). A *tool* or a loader of your own that
+does not want to call the dispatcher reads the CODE table
+instead (`QLBUSE.MD`, B3).
 
 ## 13. Limits
 
@@ -601,12 +667,6 @@ uses when it does not want to call the dispatcher (`QLBUSE.MD`).
 * RLINK exports at most about 2000-2500 names (the hash table
   and the name entries must stay under 64 KB; `Too many
   symbols.`).
-* `D` must be at least the end of QB's own data: `3317h` in
-  QuickBASIC 4.5 and 4.0 (LINK writes exactly that; RLINK uses
-  `3360h`).
-* Not examined: `w6/w7`, `w9/w10` different from 0 (far data and
-  far BSS), `04h`, `08h`, `0Ch`, `0Eh` calls, STRING function
-  results.
 
 ## 14. The refusal checklist: what QB checks
 
@@ -632,19 +692,19 @@ start) unless [M]:
 ## 15. A worked example: the bytes of a small library
 
 The library below is `HELLO.ASM` of `TEST\QLB` (one routine
-`HELLO`) linked with `rlink qlb`; 1509 bytes. Its code image is
+`HELLO`) linked with `rlink qlb`; 1537 bytes. Its code image is
 20 paragraphs, `D = 3360h`, `T = 32`, `Z = 3380h`, `w3 = 034Ch`.
 The code image, the tail and the zero padding are summarised.
 
 ```
 0000  4D 5A
       e_magic = 5A4D
-0002  41 01
-      e_cblp = 0141
+0002  5D 01
+      e_cblp = 015D
 0004  1D 00
       e_cp = 001D
-0006  12 00
-      e_crlc = 0012
+0006  14 00
+      e_crlc = 0014
 0008  40 00
       e_cparhdr = 0040
 000A  FF FF
@@ -673,7 +733,7 @@ The code image, the tail and the zero padding are summarised.
       relocation 2: offset 0002, segment 0002
 002A  02 00 4A 03
       relocation 3: offset 0002, segment 034A
-    (18 relocation entries in all, up to file offset 0066;
+    (20 relocation entries in all, up to file offset 006E;
     zero padding up to 0400)
 0400  00 00
       C = ULCodeSquishSize = 0000
@@ -693,18 +753,18 @@ The code image, the tail and the zero padding are summarised.
       magic = 6C75
 056C  22 00
       symStart = 0022 (CODE table)
-056E  24 00
-      datStart = 0024 (DATA table)
-0570  2E 00
-      w0 segment table offset = 002E
+056E  34 00
+      datStart = 0034 (DATA table)
+0570  3E 00
+      w0 segment table offset = 003E
 0572  00 00
       w1 (0; relocated: code segment) = 0000
 0574  14 00
       w2 code paragraphs = 0014
 0576  4C 03
       w3 end of data, paragraphs = 034C
-0578  81 00
-      w4 symbol block bytes = 0081
+0578  9D 00
+      w4 symbol block bytes = 009D
 057A  14 00
       w5 = w2 = 0014
 057C  00 00
@@ -717,39 +777,46 @@ The code image, the tail and the zero padding are summarised.
       w9 far BSS size low = 0000
 0584  00 00
       w10 far BSS size high = 0000
-0586  00 00
+0586  01 00 90 00 00 00 00 00
+      CODE entry 0: flags 0001, name +0090 (start), offset
+      0000, segment 0000
+058E  01 00 96 00 03 00 00 00
+      CODE entry 1: flags 0001, name +0096 (HELLO), offset
+      0003, segment 0000
+0596  00 00
       CODE table terminator
-0588  02 00 58 00 60 33 14 00
-      DATA entry 0: flags 0002, name +0058 (b_ULVars), offset
+0598  02 00 68 00 60 33 14 00
+      DATA entry 0: flags 0002, name +0068 (b_ULVars), offset
       3360, segment 0014
-0590  00 00
+05A0  00 00
       DATA table terminator
-0592  03 00 61 00 00 00 14 00
-      SEGMENT entry 0: flags 0003, name +0061 (NULL), offset
+05A2  03 00 71 00 00 00 14 00
+      SEGMENT entry 0: flags 0003, name +0071 (NULL), offset
       0000, segment 0014
-059A  03 00 66 00 00 00 4A 03
-      SEGMENT entry 1: flags 0003, name +0066 (_DATA), offset
+05AA  03 00 76 00 00 00 4A 03
+      SEGMENT entry 1: flags 0003, name +0076 (_DATA), offset
       0000, segment 034A
-05A2  03 00 6C 00 10 00 4A 03
-      SEGMENT entry 2: flags 0003, name +006C (BC_SAB), offset
+05B2  03 00 7C 00 10 00 4A 03
+      SEGMENT entry 2: flags 0003, name +007C (BC_SAB), offset
       0010, segment 034A
-05AA  03 00 73 00 00 00 4C 03
-      SEGMENT entry 3: flags 0003, name +0073 (STACK), offset
+05BA  03 00 83 00 00 00 4C 03
+      SEGMENT entry 3: flags 0003, name +0083 (STACK), offset
       0000, segment 034C
-05B2  03 00 79 00 00 00 4C 03
-      SEGMENT entry 4: flags 0003, name +0079 (SYMBOL), offset
+05C2  03 00 89 00 00 00 4C 03
+      SEGMENT entry 4: flags 0003, name +0089 (SYMBOL), offset
       0000, segment 034C
-05BA  00 00
+05CA  00 00
       SEGMENT table terminator
-05BC  62 5F 55 4C 56 61 72 73 ...
-      name pool: 'b_ULVars|NULL|_DATA|BC_SAB|STACK|SYMBOL||'
-05E5  end of file (1509 bytes)
+05CC  62 5F 55 4C 56 61 72 73 ...
+      name pool:
+      'b_ULVars|NULL|_DATA|BC_SAB|STACK|SYMBOL|start|HELLO||'
+0601  end of file (1537 bytes)
 ```
 
 Position of the QB header: `(0040h + 0016h) * 16 + 0004h =
 0564h`, and `HDRB + 4 + w2*16 + T = 400h + 4 + 140h + 20h =
-564h`. The symbol block size `w4 = 81h` (129 bytes) = 564h to
-the end of file at 5E5h.
+564h`. The symbol block size `w4 = 9Dh` (157 bytes) = 564h to
+the end of file at 601h.
 
 ## 16. Assembler examples
 
@@ -982,12 +1049,17 @@ applychunk:
 
 ## 17. Sources and confidence
 
+* `MSRT.LST` (in this folder) is a disassembly of the runtime
+  that `LINK /Q` puts into every library: the dispatcher, the
+  service thunks, `GETPROC`, `Init`, `Term` ... with the
+  variables of QB's data segment.
+
 * Measured against QuickBASIC 4.50 (`QB.EXE` 278804 bytes) and
   4.0 with libraries written by `RLINK`, with Microsoft's
   `QB.QLB`, and with a logging dispatcher; the loader of
-  QuickBASIC (`B$ULLoad`) was read from its disassembly. The
-  earlier long-form notes are `DOC\QLB.MD`, `DOC\QLB-IMP.MD` and
-  `DOC\QLBRT.MD` of the RTools repository.
+  QuickBASIC (`B$ULLoad`) was read from its disassembly. Longer
+  notes are `DOC\QLB.MD`, `DOC\QLB-IMP.MD` and `DOC\QLBRT.MD` of
+  the RTools repository.
 * Open: the behaviour of selectors `04h 08h 0Ch 0Eh`, the flag
   `4` of `NMALLOC/ENMALLOC`, non-zero `w6..w10`, STRING function
   results, whether other parts of QB (IDE, debugger) read the
