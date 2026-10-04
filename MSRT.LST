@@ -1,0 +1,896 @@
+;==============================================================
+; MSRT.LST - the runtime that LINK /Q puts into a QuickLibrary
+;==============================================================
+
+; Disassembly of the part of the runtime that Microsoft's linker
+; (LINK 3.69, switch /Q) takes from BQLB45.LIB of QuickBASIC
+; 4.50 and puts into every QuickLibrary: the modules ultort.asm,
+; erbcproc.asm and ulutil.asm, which are the dispatcher behind
+; b_ULVars[0] and the thunks of the QuickBASIC services. The
+; annotations are ours (DosWorld 2026, public domain); the
+; instruction bytes are Microsoft's, so check the rights before
+; you redistribute this file.
+
+; How it was made: a small object was linked with LINK /Q
+; ARBO.OBJ,MS.QLB,NUL,BQLB45.LIB; the three modules were located
+; in the code image of MS.QLB by comparing their bytes with the
+; OMF records of BQLB45.LIB. Names and offsets are the public
+; symbols of that library; the listing is ndisasm output with
+; labels. Statements marked "inferred" are read from the code
+; and were not run.
+
+; Reading it
+;   Offsets are offsets in the code segment of the runtime
+;   (the segment that the symbol CODE of the QLB names). A far
+;   call "0x2c:0x2f5" goes to the same code segment (relocated
+;   segment word); "0x0:" is the _TEXT segment of the C
+;   runtime part of the library. [0xNN] with DS is a variable
+;   in the data segment of QuickBASIC (list below). The
+;   selector table is the one of DOC\QLB-IMP.MD section 8.
+
+; Variables of the QB data segment (ulstart.asm, segment NULL),
+; the offsets that DS-relative code of a library can use.
+; RLINK knows these names as imports (DOC\QLB-IMP.MD section 9).
+
+;   0000 STKHQQ                0000 __anullsize
+;   0002 __aaltstkovr          0006 __asizds
+;   0008 __atopsp              000A __aexit_rtn
+;   000C __abrktb              005C __abrkp
+;   005C __abrktbe             005E __acfinfo
+;   006A b$cfilex              006B __aintdiv
+;   006F __fac                 0077 _errno
+;   0079 __umaskval            007B __pspadr
+;   007D __psp                 007F __osversion
+;   007F __dosvermajor         007F __osmajor
+;   0080 __dosverminor         0080 __osminor
+;   0081 __osmode              0082 __oserr
+;   0082 __doserrno            0084 __nfile
+;   0086 __osfile              009A ___argc
+;   009C ___argv               009E _environ
+;   00A0 __child               00A2 __pgmptr
+;   00A8 __acmdln              00AA __acmdseg
+;   00AC __aenvseg             00AE __ovlflag
+;   00AF __intno               00B0 __ovlvec
+;   00B4 b$pend                00B6 b$pendchk
+;   00B8 b$pBC_SAB             00B8 __bpBC_SAB
+;   00BA b$nmalloc_start       00BC b$nmalloc_end
+;   00BE b$pULtoRTFar          00C2 b$pULtoRTNear
+;   00C6 b$Chaining            00C6 b$RTMOverlayStart
+;   00C7 b$chaindata_len       00C9 b$seg
+;   00CB $AC                   00CB $DAC
+;   00CB B$DAC                 00CF B$AC
+;   00D3 b$ULSymSeg            00D3 b_ULSymSeg
+;   00D5 b$ULDataLength        00D7 b$ULDataStart
+;   00D9 b$FHDULNearData       00E1 b$FHDULFarData
+;   00E9 b$CtrlFlags           00EA b$userflags
+;   00EC b$mainframe           00EE b$curframe
+;   00F0 b$curlevel            00F2 b$EVTRETV
+;   00F6 B$VALTYP              00F6 b$VTYP
+;   00F7 b$TTYP                00F8 b$LPTFDB
+;   00FE b$PUDS                0102 b$erradr
+;   0102 b_erradr              0106 b$errmod
+;   0106 b_errmod              010A b$errnum
+;   010A b_errnum              010C b$errlin
+;   010C b_errlin              010E b$inonerr
+;   010F b$PTRFIL              0113 b$cCSubs
+;   0115 b$cNonQBIFrames       0117 __aseglo
+
+
+;==============================================================
+; module ultort.asm  (cs:00A8..01B7)
+; user library to runtime: error thunks, the entry
+; b_ULVars[0] (B$RTtoULFar), thunks of QB services
+;==============================================================
+
+; B$ERR_NOL: BX = 9400h, then the common raise code.
+B$ERR_NOL:
+  00A8  BB 00 94     mov bx,0x9400
+  00AB  E9 B7 00     jmp B$RUNERR
+
+; B$ERR_BFM .. B$ERR_OV: eight entry points, each sets BL
+; (the "mov bl,N" is hidden inside the next "cmp ax,imm"):
+; BFM 54, IFN 52, DV0 11, FC 5, RG 3, OM 7, AFE 73, OV 6.
+; BH = 0, then raise the error.
+B$ERR_BFM:
+  00AE  B3 36        mov bl,0x36
+  00B0  3D B3 34     cmp ax,0x34b3
+  00B3  3D B3 0B     cmp ax,0xbb3
+  00B6  3D B3 05     cmp ax,0x5b3
+  00B9  3D B3 03     cmp ax,0x3b3
+  00BC  3D B3 07     cmp ax,0x7b3
+  00BF  3D B3 49     cmp ax,0x49b3
+  00C2  3D B3 06     cmp ax,0x6b3
+  00C5  32 FF        xor bh,bh
+
+; raise a run-time error: BX = error code; B$RUNERR does not
+; return to the caller.
+L00C7:
+  00C7  E9 9B 00     jmp B$RUNERR
+
+; B$ERR_OSS: BX = 9007h.
+B$ERR_OSS:
+  00CA  BB 07 90     mov bx,0x9007
+  00CD  EB F8        jmp L00C7
+
+; B$RTtoULNear: call near [cs:DI+0EAh], retf.
+B$RTtoULNear:
+  00CF  81 C7 EA 00  add di,0xea
+  00D3  2E FF 15     call word near [cs:di]
+  00D6  CB           retf
+
+; B$RTtoULFar = b_ULVars[0], the entry of the library.
+; CX = selector 0,2,..,10h. Jumps through the table at cs:00EC
+; (below). The handler ends with RETF (selectors 0..6) or
+; RETF 2 (selectors 8..10h) and returns to QuickBASIC.
+B$RTtoULFar:
+  00D7  81 C1 EC 00  add cx,0xec
+  00DB  8B D9        mov bx,cx
+  00DD  2E FF 27     jmp word near [cs:bx]
+
+; gateway to QuickBASIC, near form: call far [DS:00C2]
+; (b$pULtoRTNear). DI = service number. DS must be the QB
+; data segment. Every thunk below ends here.
+L00E0:
+  00E0  FF 1E C2 00  call word far [0xc2]  ; b$pULtoRTNear
+  00E4  5F           pop di
+  00E5  C3           ret
+        ; gateway, far form: jmp far [DS:00BE] (b$pULtoRTFar).
+        ; BX = service number.
+  00E6  FF 2E BE 00  jmp word far [0xbe]  ; b$pULtoRTFar
+
+; services of QuickBASIC, numbers 0,2,..,42. Each thunk:
+;    push di / mov di,N / jmp gateway (call far [DS:00C2],
+;    pop di, ret). The far entry points of the group below
+;    use "mov bx,N / jmp far [DS:00BE]".
+B$BREAK_CHK:
+  00FE  57           push di
+  00FF  BF 00 00     mov di,0x0
+  0102  EB DC        jmp L00E0
+
+B$FOUTBX:
+  0104  57           push di
+  0105  BF 02 00     mov di,0x2
+  0108  EB D6        jmp L00E0
+
+B$LHLOCFDB:
+  010A  57           push di
+  010B  BF 04 00     mov di,0x4
+  010E  EB D0        jmp L00E0
+
+B$RES_SETUP:
+  0110  57           push di
+  0111  BF 06 00     mov di,0x6
+  0114  EB CA        jmp L00E0
+
+B$TYPUI:
+  0116  57           push di
+  0117  BF 08 00     mov di,0x8
+  011A  EB C4        jmp L00E0
+
+B$LHFDBLOC:
+  011C  57           push di
+  011D  BF 0A 00     mov di,0xa
+  0120  EB BE        jmp L00E0
+
+B$$WCLF:
+  0122  57           push di
+  0123  BF 0C 00     mov di,0xc
+  0126  EB B8        jmp L00E0
+
+B$$RCH:
+  0128  57           push di
+  0129  BF 0E 00     mov di,0xe
+  012C  EB B2        jmp L00E0
+
+B$$TCR:
+  012E  57           push di
+  012F  BF 10 00     mov di,0x10
+  0132  EB AC        jmp L00E0
+
+B$$WCH:
+  0134  57           push di
+  0135  BF 12 00     mov di,0x12
+  0138  EB A6        jmp L00E0
+
+B$STALCTMP:
+  013A  57           push di
+  013B  BF 14 00     mov di,0x14
+  013E  EB A0        jmp L00E0
+
+B$TTY_SOUT:
+  0140  57           push di
+  0141  BF 16 00     mov di,0x16
+  0144  EB 9A        jmp L00E0
+
+B$STDALC:
+  0146  57           push di
+  0147  BF 18 00     mov di,0x18
+  014A  EB 94        jmp L00E0
+
+B$STDALCTMP:
+  014C  57           push di
+  014D  BF 1A 00     mov di,0x1a
+  0150  EB 8E        jmp L00E0
+
+B$STDALCALLTMP:
+  0152  57           push di
+  0153  BF 1C 00     mov di,0x1c
+  0156  EB 88        jmp L00E0
+
+B$PUTNUM:
+  0158  57           push di
+  0159  BF 1E 00     mov di,0x1e
+  015C  EB 82        jmp L00E0
+
+__BRUNERR:
+  015E  57           push di
+  015F  BF 20 00     mov di,0x20
+  0162  E9 7B FF     jmp L00E0
+
+B$RUNERR:
+  0165  57           push di
+  0166  BF 22 00     mov di,0x22
+  0169  E9 74 FF     jmp L00E0
+
+B$FHHighAlloc:
+  016C  57           push di
+  016D  BF 24 00     mov di,0x24
+  0170  E9 6D FF     jmp L00E0
+
+B$FHHighDealloc:
+  0173  57           push di
+  0174  BF 26 00     mov di,0x26
+  0177  E9 66 FF     jmp L00E0
+
+B$IFHAlloc:
+  017A  57           push di
+  017B  BF 28 00     mov di,0x28
+  017E  E9 5F FF     jmp L00E0
+
+B$FHDealloc:
+  0181  57           push di
+  0182  BF 2A 00     mov di,0x2a
+  0185  E9 58 FF     jmp L00E0
+
+; far group (BX = 0,4,..,20): B$ULReload, B$IStop, B$END,
+; B$GetNmalloc, B$IEND, B$SetUEvent.
+B$ULReload:
+  0188  BB 00 00     mov bx,0x0
+  018B  EA E6 00 2C+ jmp word 0x2c:word 0xe6
+
+B$IStop:
+  0190  BB 04 00     mov bx,0x4
+  0193  EA E6 00 2C+ jmp word 0x2c:word 0xe6
+
+B$END:
+  0198  BB 08 00     mov bx,0x8
+  019B  EA E6 00 2C+ jmp word 0x2c:word 0xe6
+
+B$GetNmalloc:
+  01A0  BB 0C 00     mov bx,0xc
+  01A3  EA E6 00 2C+ jmp word 0x2c:word 0xe6
+
+B$IEND:
+  01A8  BB 10 00     mov bx,0x10
+  01AB  EA E6 00 2C+ jmp word 0x2c:word 0xe6
+
+B$SetUEvent:
+  01B0  BB 14 00     mov bx,0x14
+  01B3  EA E6 00 2C+ jmp word 0x2c:word 0xe6
+
+;==============================================================
+; module erbcproc.asm  (cs:01B8..0221)
+; B$CONERR: hands a run-time error to QuickBASIC
+;==============================================================
+
+; B$CONERR (selector 08h, one word argument): hands a run-time
+; error to QuickBASIC while library code is active.
+; Details: DOC\QLB-IMP.MD section 8.3.
+B$CONERR:
+  01B8  55           push bp
+  01B9  8B EC        mov bp,sp
+  01BB  33 C0        xor ax,ax
+  01BD  E8 4A FE     call L000A
+  01C0  C7 06 06 01+ mov word [0x106],0x2  ; b$errmod
+  01C6  89 1E 08 01  mov [0x108],bx
+  01CA  A1 0A 01     mov ax,[0x10a]  ; b$errnum
+  01CD  80 3E 0E 01+ cmp byte [0x10e],0x0  ; b$inonerr
+  01D2  75 4A        jnz L021E
+  01D4  0A E4        or ah,ah
+  01D6  75 46        jnz L021E
+  01D8  C6 06 0E 01+ mov byte [0x10e],0xff  ; b$inonerr
+  01DD  8B 5E 06     mov bx,[bp+0x6]
+  01E0  8B 47 02     mov ax,[bx+0x2]
+  01E3  8B 57 04     mov dx,[bx+0x4]
+  01E6  A3 02 01     mov [0x102],ax  ; b$erradr
+  01E9  89 16 04 01  mov [0x104],dx
+  01ED  52           push dx
+  01EE  E8 85 FE     call L0076
+  01F1  A3 0C 01     mov [0x10c],ax  ; b$errlin
+  01F4  5A           pop dx
+  01F5  1E           push ds
+  01F6  8E DA        mov ds,dx
+  01F8  8B 1E 0E 00  mov bx,[0xe]
+  01FC  1F           pop ds
+  01FD  8B 5F 04     mov bx,[bx+0x4]
+  0200  87 CB        xchg cx,bx
+  0202  E3 1A        jcxz L021E
+  0204  8B 5E 06     mov bx,[bp+0x6]
+  0207  8B 2F        mov bp,[bx]
+  0209  8B C5        mov ax,bp
+  020B  2B 46 F8     sub ax,[bp-0x8]
+  020E  2B 46 F6     sub ax,[bp-0xa]
+  0211  2B 46 F6     sub ax,[bp-0xa]
+  0214  2D 0A 00     sub ax,0xa
+  0217  8B E0        mov sp,ax
+  0219  52           push dx
+  021A  51           push cx
+  021B  E9 09 FE     jmp L0027
+
+L021E:
+  021E  5D           pop bp
+  021F  CA 02 00     retf word 0x2
+
+;==============================================================
+; module ulutil.asm  (cs:0222..057D)
+; GETPROC, GETCOMMON, GetData, GetSeg, Init, Term,
+; AllocDataImage, DataRelease
+;==============================================================
+
+; B$ULGetCommon (selector 10h, one word argument).
+; Argument: near pointer to a name descriptor, or 0 (then the
+; name is "COMMON"). Looks the name up in the SEGMENT table
+; (bl = 0Ch) and answers the offset and size of the area in
+; BX and DX; AX = BX = DX = 0 if there is none.
+B$ULGetCommon:
+  0222  55           push bp
+  0223  8B EC        mov bp,sp
+  0225  06           push es
+  0226  8B 5E 06     mov bx,[bp+0x6]
+  0229  0B DB        or bx,bx
+  022B  74 06        jz L0233
+  022D  83 7F 02 00  cmp word [bx+0x2],0x0
+  0231  75 05        jnz L0238
+
+L0233:
+  0233  C7 46 06 46+ mov word [bp+0x6],0x3346
+
+L0238:
+  0238  B3 0C        mov bl,0xc
+  023A  FF 76 06     push word [bp+0x6]
+  023D  9A F5 02 2C+ call word 0x2c:word 0x2f5
+  0242  0B C0        or ax,ax
+  0244  75 04        jnz L024A
+  0246  0B D2        or dx,dx
+  0248  74 29        jz L0273
+
+L024A:
+  024A  51           push cx
+  024B  E8 FA 00     call L0348
+  024E  5B           pop bx
+  024F  50           push ax
+  0250  8E 06 D3 00  mov es,word [0xd3]  ; b$ULSymSeg
+  0254  83 C3 08     add bx,0x8
+  0257  26 C4 47 04  les ax,word [es:bx+0x4]
+  025B  8C C2        mov dx,es
+  025D  E8 E8 00     call L0348
+  0260  92           xchg ax,dx
+  0261  58           pop ax
+  0262  2B D0        sub dx,ax
+  0264  76 0A        jna L0270
+  0266  3D 6E 33     cmp ax,0x336e
+  0269  75 08        jnz L0273
+  026B  83 FA 06     cmp dx,0x6
+  026E  77 03        ja L0273
+
+L0270:
+  0270  33 C0        xor ax,ax
+  0272  99           cwd
+
+L0273:
+  0273  93           xchg ax,bx
+  0274  33 C0        xor ax,ax
+  0276  07           pop es
+  0277  5D           pop bp
+  0278  CA 02 00     retf word 0x2
+
+; B$ULGetProc (selector 0Ah). Argument [bp+6]: near pointer
+; to the BASIC string descriptor {length, pointer} of the
+; name.
+; DX = flag: 0040h for a CDECL declaration, else 0.
+; Answer: far address in DX:AX, 0:0 if the name is unknown.
+B$ULGetProc:
+  027B  55           push bp
+  027C  8B EC        mov bp,sp
+  027E  83 EC 04     sub sp,0x4
+  0281  8B 46 06     mov ax,[bp+0x6]
+  0284  0B D2        or dx,dx
+  0286  74 28        jz L02B0
+        ; flag <> 0: name := "_" + name (string
+        ; concatenation),
+        ; then every "." of the new string becomes "_".
+  0288  B1 5F        mov cl,0x5f
+  028A  51           push cx
+  028B  8B DC        mov bx,sp
+  028D  B9 01 00     mov cx,0x1
+  0290  53           push bx
+  0291  51           push cx
+  0292  8B DC        mov bx,sp
+  0294  53           push bx
+  0295  50           push ax
+  0296  9A 42 02 00+ call word 0x0:word 0x242
+  029B  83 C4 06     add sp,0x6
+  029E  8B D8        mov bx,ax
+  02A0  8B 0F        mov cx,[bx]
+  02A2  8B 5F 02     mov bx,[bx+0x2]
+
+L02A5:
+  02A5  80 3F 2E     cmp byte [bx],0x2e
+  02A8  75 03        jnz L02AD
+  02AA  C6 07 5F     mov byte [bx],0x5f
+
+L02AD:
+  02AD  43           inc bx
+  02AE  E2 F5        loop L02A5
+
+; the name (or the new string) is assigned to the local
+; string variable [bp-4]; this takes over the temporary string
+; of QuickBASIC (inferred). The routine frees it at the end
+; with
+; B$STDALC.
+L02B0:
+  02B0  8D 5E FC     lea bx,[bp-0x4]
+  02B3  C7 47 02 00+ mov word [bx+0x2],0x0
+  02B8  50           push ax
+  02B9  53           push bx
+  02BA  9A 3F 02 00+ call word 0x0:word 0x23f
+        ; BL = 8: look in the CODE table (offset +08h of the
+        ; QB
+        ; header) with the lookup routine at 02F5.
+  02BF  B3 08        mov bl,0x8
+  02C1  50           push ax
+  02C2  9A F5 02 2C+ call word 0x2c:word 0x2f5
+        ; found (DX <> 0): done. Else look in the DATA table
+        ; (BL=0Ah):
+  02C7  0B D2        or dx,dx
+  02C9  75 19        jnz L02E4
+  02CB  8D 5E FC     lea bx,[bp-0x4]
+  02CE  53           push bx
+  02CF  9A F0 02 2C+ call word 0x2c:word 0x2f0
+        ; accept only an address whose segment is not below
+        ; w1, the
+        ; code base (word +0Eh of the QB header, relocated);
+        ; otherwise answer 0:0.
+  02D4  06           push es
+  02D5  8E 06 D3 00  mov es,word [0xd3]  ; b$ULSymSeg
+  02D9  33 DB        xor bx,bx
+  02DB  26 3B 57 0E  cmp dx,[es:bx+0xe]
+  02DF  07           pop es
+  02E0  73 02        jnc L02E4
+  02E2  93           xchg ax,bx
+  02E3  99           cwd
+
+; free the string variable [bp-4]: B$STDALC.
+L02E4:
+  02E4  8D 5E FC     lea bx,[bp-0x4]
+  02E7  E8 5C FE     call B$STDALC
+  02EA  8B E5        mov sp,bp
+  02EC  5D           pop bp
+  02ED  CA 02 00     retf word 0x2
+
+; B$ULGetData (selector 0Ch): BL = 0Ah (DATA table); the
+; "cmp ax,0CB3h" hides "mov bl,0Ch" = entry of B$ULGetSeg
+; (selector 0Eh, SEGMENT table); both fall into the lookup.
+B$ULGetData:
+  02F0  B3 0A        mov bl,0xa
+  02F2  3D B3 0C     cmp ax,0xcb3
+        ; lookup(table, name): BL = 8 CODE, 0Ah DATA, 0Ch
+        ; SEGMENT
+        ; (index into the QB header: the offset of the table
+        ; is the
+        ; word at [b$ULSymSeg:BX]). The name is first copied
+        ; and
+        ; upper-cased by a runtime routine (call 0:0281). Each
+        ; entry
+        ; {flags, name offset, offset, segment} is compared
+        ; with
+        ; repe cmpsb; the stored name must end (byte 0) where
+        ; the
+        ; name ends. Found: ES:AX = the address, CX = the
+        ; entry.
+        ; The temporary copy is freed with B$STDALCTMP at the
+        ; end.
+        ; The stored names were upper-cased by QB when it
+        ; loaded the
+        ; library, so the compare ignores case.
+  02F5  55           push bp
+  02F6  8B EC        mov bp,sp
+  02F8  56           push si
+  02F9  57           push di
+  02FA  06           push es
+  02FB  32 FF        xor bh,bh
+  02FD  53           push bx
+  02FE  FF 76 06     push word [bp+0x6]
+  0301  9A 81 02 00+ call word 0x0:word 0x281
+  0306  5B           pop bx
+  0307  50           push ax
+  0308  96           xchg ax,si
+  0309  33 C0        xor ax,ax
+  030B  99           cwd
+  030C  8E 06 D3 00  mov es,word [0xd3]  ; b$ULSymSeg
+  0310  8B 0C        mov cx,[si]
+  0312  8B 74 02     mov si,[si+0x2]
+  0315  26 8B 1F     mov bx,[es:bx]
+  0318  83 EB 08     sub bx,0x8
+
+L031B:
+  031B  83 C3 08     add bx,0x8
+  031E  26 83 3F 00  cmp word [es:bx],0x0
+  0322  74 19        jz L033D
+  0324  26 8B 7F 02  mov di,[es:bx+0x2]
+  0328  51           push cx
+  0329  56           push si
+  032A  F3 A6        repe cmpsb
+  032C  5E           pop si
+  032D  59           pop cx
+  032E  75 EB        jnz L031B
+  0330  26 38 05     cmp [es:di],al
+  0333  75 E6        jnz L031B
+  0335  26 C4 47 04  les ax,word [es:bx+0x4]
+  0339  8C C2        mov dx,es
+  033B  8B CB        mov cx,bx
+
+L033D:
+  033D  5B           pop bx
+  033E  E8 0B FE     call B$STDALCTMP
+  0341  07           pop es
+  0342  5F           pop di
+  0343  5E           pop si
+  0344  5D           pop bp
+  0345  CA 02 00     retf word 0x2
+
+; helper: AX := AX + (DX - DS) * 16, a segment:offset pair
+; to an offset in the data segment.
+L0348:
+  0348  8C D9        mov cx,ds
+  034A  2B D1        sub dx,cx
+  034C  B1 04        mov cl,0x4
+  034E  D3 E2        shl dx,cl
+  0350  03 C2        add ax,dx
+  0352  C3           ret
+
+; B$ULTerm (selector 02h): runs the terminator tables,
+; frees the brk() blocks (0435).
+B$ULTerm:
+  0353  B1 03        mov cl,0x3
+  0355  B8 28 33     mov ax,0x3328
+  0358  E8 97 00     call L03F2
+  035B  E8 D7 00     call L0435
+  035E  CB           retf
+
+; B$ULInit (selector 00h): second start of a program: Term and
+; restore the data (0459). Clears _edata.._end and the far
+; BSS (words +1Ch..20h of the QB header), sets the near heap
+; variables (b$nmalloc_start/end), sets bit 2 of b$CtrlFlags,
+; runs the initialiser tables (XIB..XIE).
+B$ULInit:
+  035F  57           push di
+  0360  06           push es
+  0361  F6 06 E9 00+ test byte [0xe9],0x2  ; b$CtrlFlags
+  0366  74 08        jz L0370
+  0368  9A 53 03 2C+ call word 0x2c:word 0x353
+  036D  E8 E9 00     call L0459
+
+L0370:
+  0370  1E           push ds
+  0371  07           pop es
+  0372  B9 80 33     mov cx,0x3380
+  0375  BF 74 33     mov di,0x3374
+  0378  2B CF        sub cx,di
+  037A  33 C0        xor ax,ax
+  037C  D1 E9        shr cx,,1
+  037E  F3 AB        rep stosw
+  0380  73 01        jnc L0383
+  0382  AA           stosb
+
+L0383:
+  0383  8E 06 D3 00  mov es,word [0xd3]  ; b$ULSymSeg
+  0387  26 8B 16 20+ mov dx,[es:0x20]
+  038C  26 8B 1E 1E+ mov bx,[es:0x1e]
+  0391  26 8E 06 1C+ mov es,word [es:0x1c]
+  0396  33 FF        xor di,di
+  0398  0B D2        or dx,dx
+  039A  74 0F        jz L03AB
+
+L039C:
+  039C  B9 00 80     mov cx,0x8000
+  039F  F3 AB        rep stosw
+  03A1  8C C1        mov cx,es
+  03A3  80 C5 10     add ch,0x10
+  03A6  8E C1        mov es,cx
+  03A8  4A           dec dx
+  03A9  75 F1        jnz L039C
+
+L03AB:
+  03AB  8B CB        mov cx,bx
+  03AD  D1 E9        shr cx,,1
+  03AF  F3 AB        rep stosw
+  03B1  73 01        jnc L03B4
+  03B3  AA           stosb
+
+L03B4:
+  03B4  B8 6E 33     mov ax,0x336e
+  03B7  BA 74 33     mov dx,0x3374
+  03BA  8B CA        mov cx,dx
+  03BC  2B C8        sub cx,ax
+  03BE  83 F9 06     cmp cx,0x6
+  03C1  77 16        ja L03D9
+  03C3  9A A0 01 2C+ call word 0x2c:word 0x1a0
+  03C8  0B C0        or ax,ax
+  03CA  74 07        jz L03D3
+  03CC  93           xchg ax,bx
+  03CD  8B C2        mov ax,dx
+  03CF  03 D3        add dx,bx
+  03D1  EB 06        jmp L03D9
+
+L03D3:
+  03D3  B8 6E 33     mov ax,0x336e
+  03D6  BA 74 33     mov dx,0x3374
+
+L03D9:
+  03D9  A3 BA 00     mov [0xba],ax  ; b$nmalloc_start
+  03DC  A3 0C 00     mov [0xc],ax  ; __abrktb
+  03DF  89 16 BC 00  mov [0xbc],dx  ; b$nmalloc_end
+  03E3  41           inc cx
+  03E4  80 0E E9 00+ or byte [0xe9],0x2  ; b$CtrlFlags
+  03E9  B8 3A 33     mov ax,0x333a
+  03EC  E8 03 00     call L03F2
+  03EF  07           pop es
+  03F0  5F           pop di
+  03F1  CB           retf
+
+; RunTable(descriptor): calls the far pointers stored between
+; two segment markers, from the last to the first.
+L03F2:
+  03F2  56           push si
+  03F3  57           push di
+  03F4  32 ED        xor ch,ch
+  03F6  96           xchg ax,si
+  03F7  B8 03 00     mov ax,0x3
+
+L03FA:
+  03FA  51           push cx
+  03FB  56           push si
+  03FC  50           push ax
+  03FD  8B DC        mov bx,sp
+  03FF  53           push bx
+  0400  53           push bx
+  0401  9A F3 02 2C+ call word 0x2c:word 0x2f3
+  0406  5B           pop bx
+  0407  83 47 02 03  add word [bx+0x2],0x3
+  040B  E8 3A FF     call L0348
+  040E  96           xchg ax,si
+  040F  53           push bx
+  0410  9A F3 02 2C+ call word 0x2c:word 0x2f3
+  0415  E8 30 FF     call L0348
+  0418  97           xchg ax,di
+
+L0419:
+  0419  3B F7        cmp si,di
+  041B  74 0E        jz L042B
+  041D  83 EF 04     sub di,0x4
+  0420  8B 05        mov ax,[di]
+  0422  0B 45 02     or ax,[di+0x2]
+  0425  74 F2        jz L0419
+  0427  FF 1D        call word far [di]
+  0429  EB EE        jmp L0419
+
+L042B:
+  042B  58           pop ax
+  042C  5E           pop si
+  042D  03 F0        add si,ax
+  042F  59           pop cx
+  0430  E2 C8        loop L03FA
+  0432  5F           pop di
+  0433  5E           pop si
+  0434  C3           ret
+
+; frees the DOS blocks of brk() (INT 21h AH=49h), 4 bytes per
+; entry from 0010h of the QB data segment.
+L0435:
+  0435  06           push es
+  0436  BB 10 00     mov bx,0x10
+
+L0439:
+  0439  3B 1E 5C 00  cmp bx,[0x5c]  ; __abrkp
+  043D  77 0C        ja L044B
+  043F  8E 47 02     mov es,word [bx+0x2]
+  0442  B4 49        mov ah,0x49
+  0444  CD 21        int byte 0x21
+  0446  83 C3 04     add bx,0x4
+  0449  EB EE        jmp L0439
+
+L044B:
+  044B  C7 06 5C 00+ mov word [0x5c],0xc  ; __abrkp
+  0451  C7 06 17 01+ mov word [0x117],0x0  ; __aseglo
+  0457  07           pop es
+  0458  C3           ret
+
+; RestoreData: copies the saved data image (b$FHDULNearData)
+; back to b$ULDataStart, except the COMMON area, and the far
+; data; without a saved copy: B$ULReload + AllocDataImage.
+L0459:
+  0459  56           push si
+  045A  57           push di
+  045B  06           push es
+  045C  1E           push ds
+  045D  8B 3E D7 00  mov di,[0xd7]  ; b$ULDataStart
+  0461  83 3E DB 00+ cmp word [0xdb],0x0
+  0466  74 50        jz L04B8
+  0468  33 C0        xor ax,ax
+  046A  50           push ax
+  046B  9A 22 02 2C+ call word 0x2c:word 0x222
+  0470  8B 0E D5 00  mov cx,[0xd5]  ; b$ULDataLength
+  0474  0B DB        or bx,bx
+  0476  9C           pushf
+  0477  74 04        jz L047D
+  0479  2B DF        sub bx,di
+  047B  87 D9        xchg bx,cx
+
+L047D:
+  047D  A1 DB 00     mov ax,[0xdb]
+  0480  1E           push ds
+  0481  07           pop es
+  0482  8E D8        mov ds,ax
+  0484  33 F6        xor si,si
+  0486  D1 E9        shr cx,,1
+  0488  F3 A5        rep movsw
+  048A  73 01        jnc L048D
+  048C  A4           movsb
+
+L048D:
+  048D  9D           popf
+  048E  74 0A        jz L049A
+  0490  03 F2        add si,dx
+  0492  03 FA        add di,dx
+  0494  8B CB        mov cx,bx
+  0496  2B CE        sub cx,si
+  0498  F3 A4        rep movsb
+
+L049A:
+  049A  06           push es
+  049B  1F           pop ds
+  049C  8E 06 D3 00  mov es,word [0xd3]  ; b$ULSymSeg
+  04A0  26 8B 16 1A+ mov dx,[es:0x1a]
+  04A5  26 8B 1E 18+ mov bx,[es:0x18]
+  04AA  26 8E 06 16+ mov es,word [es:0x16]
+  04AF  8E 1E E3 00  mov ds,word [0xe3]
+  04B3  E8 9A 00     call L0550
+  04B6  EB 0A        jmp L04C2
+
+L04B8:
+  04B8  9A 88 01 2C+ call word 0x2c:word 0x188
+  04BD  9A C7 04 2C+ call word 0x2c:word 0x4c7
+
+L04C2:
+  04C2  1F           pop ds
+  04C3  07           pop es
+  04C4  5F           pop di
+  04C5  5E           pop si
+  04C6  C3           ret
+
+; B$ULAllocDataImage (selector 06h): saves a copy of the data
+; image (b$ULDataLength bytes from b$ULDataStart) and of the
+; far data in the far heap of QuickBASIC (B$IFHAlloc).
+B$ULAllocDataImage:
+  04C7  50           push ax
+  04C8  53           push bx
+  04C9  51           push cx
+  04CA  52           push dx
+  04CB  56           push si
+  04CC  57           push di
+  04CD  06           push es
+  04CE  1E           push ds
+  04CF  A1 D5 00     mov ax,[0xd5]  ; b$ULDataLength
+  04D2  0B C0        or ax,ax
+  04D4  74 44        jz L051A
+  04D6  8B C8        mov cx,ax
+  04D8  33 D2        xor dx,dx
+  04DA  BB D9 00     mov bx,0xd9
+  04DD  E8 9A FC     call B$IFHAlloc
+  04E0  0B C0        or ax,ax
+  04E2  74 36        jz L051A
+  04E4  8E 06 DB 00  mov es,word [0xdb]
+  04E8  33 FF        xor di,di
+  04EA  8B 36 D7 00  mov si,[0xd7]  ; b$ULDataStart
+  04EE  41           inc cx
+  04EF  D1 E9        shr cx,,1
+  04F1  F3 A5        rep movsw
+  04F3  8E 06 D3 00  mov es,word [0xd3]  ; b$ULSymSeg
+  04F7  26 8B 16 1A+ mov dx,[es:0x1a]
+  04FC  26 A1 18 00  mov ax,[es:0x18]
+  0500  3B C2        cmp ax,dx
+  0502  75 04        jnz L0508
+  0504  0B C0        or ax,ax
+  0506  74 24        jz L052C
+
+L0508:
+  0508  8B C8        mov cx,ax
+  050A  BB E1 00     mov bx,0xe1
+  050D  E8 6A FC     call B$IFHAlloc
+  0510  0B C0        or ax,ax
+  0512  75 08        jnz L051C
+  0514  BB D9 00     mov bx,0xd9
+  0517  E8 67 FC     call B$FHDealloc
+
+L051A:
+  051A  EB 10        jmp L052C
+
+L051C:
+  051C  8B D9        mov bx,cx
+  051E  8B 0E E3 00  mov cx,[0xe3]
+  0522  26 8E 1E 16+ mov ds,word [es:0x16]
+  0527  8E C1        mov es,cx
+  0529  E8 24 00     call L0550
+
+L052C:
+  052C  1F           pop ds
+  052D  07           pop es
+  052E  5F           pop di
+  052F  5E           pop si
+  0530  5A           pop dx
+  0531  59           pop cx
+  0532  5B           pop bx
+  0533  58           pop ax
+  0534  CB           retf
+
+; B$ULDataRelease (selector 04h): frees both copies
+; (B$FHDealloc).
+B$ULDataRelease:
+  0535  83 3E DB 00+ cmp word [0xdb],0x0
+  053A  74 06        jz L0542
+  053C  BB D9 00     mov bx,0xd9
+  053F  E8 3F FC     call B$FHDealloc
+
+L0542:
+  0542  83 3E E3 00+ cmp word [0xe3],0x0
+  0547  74 06        jz L054F
+  0549  BB E1 00     mov bx,0xe1
+  054C  E8 32 FC     call B$FHDealloc
+
+L054F:
+  054F  CB           retf
+
+; copy loop for areas larger than 64 KB (32 KB pieces).
+L0550:
+  0550  33 F6        xor si,si
+  0552  33 FF        xor di,di
+  0554  0B D2        or dx,dx
+  0556  74 16        jz L056E
+
+L0558:
+  0558  B9 00 80     mov cx,0x8000
+  055B  F3 A5        rep movsw
+  055D  8C C1        mov cx,es
+  055F  80 C5 10     add ch,0x10
+  0562  8E C1        mov es,cx
+  0564  8C D9        mov cx,ds
+  0566  80 C5 10     add ch,0x10
+  0569  8E D9        mov ds,cx
+  056B  4A           dec dx
+  056C  75 EA        jnz L0558
+
+L056E:
+  056E  8B CB        mov cx,bx
+  0570  D1 E9        shr cx,,1
+  0572  F3 A5        rep movsw
+  0574  73 01        jnc L0577
+  0576  A4           movsb
+
+L0577:
+  0577  C3           ret
+
+; SetUEvent: far call into the C runtime part, retf.
+SetUEvent:
+  0578  9A B0 01 2C+ call word 0x2c:word 0x1b0
+  057D  CB           retf

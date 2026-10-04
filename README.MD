@@ -173,4 +173,9 @@ rlink mzs /o=ALOADER.EXE ALOADER.RDF
 `(c) DosWorld 2026`. Public domain: the **Unlicense**, full text
 in [`LICENSE.TXT`](LICENSE.TXT) and in the header of every
 source file. Microsoft, QuickBASIC and MS-DOS are trademarks of
-Microsoft Corporation.
+Microsoft Corporation; this project is not affiliated with
+Microsoft and contains no Microsoft code or files, except
+`MSRT.LST`, a commented disassembly of the runtime that `LINK
+/Q` embeds, published for interoperability and documentation;
+check the rights that apply to you. `QB.QLB` is not included;
+the loader only reads it.

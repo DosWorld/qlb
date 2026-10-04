@@ -636,7 +636,10 @@ runtime copies the name into a local string and frees that. A
 library that does not free it leaks one temporary string per
 lookup, and QB hangs after about a dozen lookups (12 lookups of
 an unknown name were fine, 30 hung, on 4.50 and 4.0); the more
-calls a program contains, the earlier it happens.
+calls a program contains, the earlier it happens. RLINK's
+runtime skips the call when the far pointer at `DS:00C2` is
+`0:0`, so a loader that does not provide the gateway still
+works.
 
 **Where the names are kept.** A library may keep them anywhere:
 with an **empty CODE table** and a dispatcher that finds the

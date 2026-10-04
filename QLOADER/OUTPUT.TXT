@@ -1,0 +1,16 @@
+QLOADER: calling DEMO.QLB (NASM) from QuickBASIC
+ADDONE(41), by reference: x% = 42
+SUMI%(1000, 234) -> AX = 1234
+SUML&(70000, 5) -> DX:AX = 70005
+ADDBV%(7, 8), BYVAL -> AX = 15
+SLEN%(t$), descriptor -> AX = 5
+UPCASE(t$) edits in place: HELLO
+FILLB, far pointer BYVAL: 16705 16705 16705 0
+COPYS!(2.5), hidden pointer: 2.5
+COPYD#(1234.5678), hidden ptr: 1234.5678
+cdiff%(10, 3), CDECL -> AX = 7
+SYMSEG% reads DS:00D3 = 9FE6
+BASIC error 5 raised by the library
+RAISEERR(5) returned, RESUME NEXT
+selectors seen by start (hex): 6 0 0
+done

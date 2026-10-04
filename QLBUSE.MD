@@ -923,7 +923,8 @@ of the routine (`0:0` = unknown, `NOSUCH` in the demo);
 `ALOADER` keeps it in `fntab`. The library frees the name itself
 through service 26 (`QLBFMT.MD` section 12); the gateway of
 `ALOADER` ignores that call, because its string is not in a
-heap.
+heap. RLINK's runtime skips the call when `DS:00C2` is `0:0`; a
+library from another linker may not.
 
 If you do not want to start the library (for a tool that only
 lists it), walk the **CODE table** yourself, as `showtab` does
