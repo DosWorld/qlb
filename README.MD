@@ -1,6 +1,6 @@
 # QLB - QuickBASIC Quick Library (.QLB) format
 
-This folder is the result of reverse engineering of the **Quick
+This project is the result of reverse engineering of the **Quick
 Library** format of Microsoft QuickBASIC 4.0 / 4.5: the file
 format, how QuickBASIC loads a library, how it calls into it,
 and how to write one. Everything is written down, checked
@@ -158,9 +158,10 @@ rlink mzs /o=ALOADER.EXE ALOADER.RDF
 
 ## License
 
-`(c) DosWorld 2026`. Public domain: the **Unlicense**, full text
-in [`LICENSE.TXT`](LICENSE.TXT) and in the header of every
-source file. Microsoft, QuickBASIC and MS-DOS are trademarks of
+`(c) Copyright DosWorld 2026`. Public domain: the **Unlicense**,
+full text in [`LICENSE.TXT`](LICENSE.TXT).
+
+Microsoft, QuickBASIC and MS-DOS are trademarks of
 Microsoft Corporation; this project is not affiliated with
 Microsoft and contains no Microsoft code or files (`QB.QLB` is
 not included; it is only read by the loader in the test).
